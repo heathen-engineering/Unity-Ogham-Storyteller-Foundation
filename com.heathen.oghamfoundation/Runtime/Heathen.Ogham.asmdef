@@ -1,0 +1,23 @@
+{
+    "name": "Heathen.Ogham",
+    "rootNamespace": "",
+    "references": [
+        "Heathen.GameplayTags",
+        "Heathen.Lexicon"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.entities",
+            "expression": "",
+            "define": "UNITY_ENTITIES"
+        }
+    ],
+    "noEngineReferences": false
+}

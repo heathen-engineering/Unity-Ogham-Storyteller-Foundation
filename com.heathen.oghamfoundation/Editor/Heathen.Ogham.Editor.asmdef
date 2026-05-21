@@ -1,0 +1,22 @@
+{
+    "name": "Heathen.Ogham.Editor",
+    "rootNamespace": "",
+    "references": [
+        "Heathen.GameplayTags",
+        "Heathen.GameplayTags.Editor",
+        "Heathen.Lexicon",
+        "Heathen.Lexicon.Editor",
+        "Heathen.Ogham"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

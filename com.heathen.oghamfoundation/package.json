@@ -1,0 +1,24 @@
+{
+    "name": "com.heathen.oghamfoundation",
+    "displayName": "Ogham Storyteller Foundation",
+    "version": "1.0.0",
+    "unity": "6000.0",
+    "author": {
+        "name": "Heathen Group",
+        "email": "support@heathen.group",
+        "url": "https://heathen.group"
+    },
+    "description": "Tag-driven narrative graph system. Dialogue nodes connect via conditional player choices; a runtime processor walks the graph, maintains a narrative GameplayTagCollection, fires events on entry/close, and supports save/load. Engine-agnostic at the data layer — nodes carry Lexicon text keys so all displayed text is localization-aware.",
+    "license": "LICENSE.md",
+    "keywords": [
+        "dialogue",
+        "narrative",
+        "storytelling",
+        "ogham",
+        "heathen"
+    ],
+    "dependencies": {
+        "com.heathen.gameplaytags": "1.0.0",
+        "com.heathen.lexiconfoundation": "1.0.0"
+    }
+}
