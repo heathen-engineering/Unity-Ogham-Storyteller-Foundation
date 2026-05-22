@@ -112,13 +112,6 @@ namespace Heathen.Ogham
         public static IReadOnlyList<StoryOption>  Options   => _mainStory?.CurrentOptions ?? _emptyOptions;
         public static IReadOnlyList<HistoryEntry> History   => _mainStory?.History        ?? _emptyHistory;
 
-        // ── Query — specific story ────────────────────────────────────────────
-
-        public static bool                        IsActive(GameplayTag storyId) => GetStory(storyId)?.IsActive      ?? false;
-        public static StoryNode                   Data(GameplayTag storyId)     => GetStory(storyId)?.CurrentNode;
-        public static IReadOnlyList<StoryOption>  Options(GameplayTag storyId)  => GetStory(storyId)?.CurrentOptions ?? _emptyOptions;
-        public static IReadOnlyList<HistoryEntry> History(GameplayTag storyId)  => GetStory(storyId)?.History        ?? _emptyHistory;
-
         // ── State interface — main story ──────────────────────────────────────
 
         // Returns a new GameplayTagCollection containing only tags at or below the given path.
