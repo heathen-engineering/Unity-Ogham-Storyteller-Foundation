@@ -1,32 +1,47 @@
 using System;
 using System.Collections.Generic;
 using Heathen.GameplayTags;
+#if UNITY_ENTITIES
+using Unity.Collections;
+#endif
 
 namespace Heathen.Ogham
 {
-    // All narrative logic — no MonoBehaviour, no ScriptableObject dependency.
-    // OghamProcessor (MonoBehaviour) and any ECS system both call into this class.
-    public class OghamProcessorCore
+    // A named story instance: owns graph index, narrative state, and conversation history.
+    // Multiple OghamStory instances can coexist; Storyteller manages the collection.
+    // The graph (entry/child index) is immutable after data registration.
+    // The session (state, history, current entry) is swappable via Restore().
+    public class OghamStory
     {
         private readonly List<OghamData>         _assets         = new();
         private readonly List<OghamCompiledData> _compiledAssets = new();
-        // tagId -> (asset index, entry reference) — rebuilt whenever assets change.
         private readonly Dictionary<ulong, (int assetIdx, DialogueEntry entry)> _entryIndex = new();
-        // parentId -> set of child IDs across all registered assets.
-        private readonly Dictionary<ulong, HashSet<ulong>> _childIndex = new();
+        private readonly Dictionary<ulong, HashSet<ulong>>                       _childIndex = new();
 
-        private bool _isActive;
-        private ulong _currentEntryId;
-        private readonly GameplayTagCollection _state = new();
-        private readonly List<HistoryEntry> _history = new();
+        private bool   _isActive;
+        private ulong  _currentEntryId;
+        private readonly GameplayTagCollection _state   = new();
+        private readonly List<HistoryEntry>    _history = new();
 
-        public bool IsConversationActive => _isActive;
-        public DialogueEntry CurrentEntry => _isActive ? FindEntry(_currentEntryId) : null;
-        public IReadOnlyList<HistoryEntry> History => _history;
-        public GameplayTagCollection NarrativeState => _state;
+        private StoryNode                 _currentNode;
+        private IReadOnlyList<StoryOption> _currentOptions = Array.Empty<StoryOption>();
 
-        public event Action<DialogueEntry, List<DialogueOption>> OnDialogueEntered;
-        public event Action<bool> OnDialogueClosed;
+        public GameplayTag                     Id             { get; }
+        public bool                            IsActive       => _isActive;
+        public StoryNode                       CurrentNode    => _currentNode;
+        public IReadOnlyList<StoryOption>      CurrentOptions => _currentOptions;
+        public GameplayTagCollection           NarrativeState => _state;
+        public IReadOnlyList<HistoryEntry>     History        => _history;
+
+        // StoryId is the first parameter on every event so listeners can distinguish origin.
+        public event Action<GameplayTag, StoryNode>   OnEntered;
+        public event Action<GameplayTag, StoryOption> OnChoice;
+        public event Action<GameplayTag, bool>        OnClosed;
+
+        public OghamStory(GameplayTag id)
+        {
+            Id = id;
+        }
 
         // ── Asset registration ────────────────────────────────────────────────
 
@@ -64,50 +79,45 @@ namespace Heathen.Ogham
 
         // ── Conversation ──────────────────────────────────────────────────────
 
-        public bool StartConversation(GameplayTag entryTag)
+        public bool Enter(GameplayTag nodeTag)
         {
-            var entry = FindEntry(entryTag.Id);
+            var entry = FindEntryInternal(nodeTag.Id);
             if (entry == null) return false;
 
-            if (_isActive) CloseConversation(interrupted: true);
+            if (_isActive) CloseInternal(interrupted: true);
 
-            _isActive = true;
-            _currentEntryId = entryTag.Id;
+            _isActive       = true;
+            _currentEntryId = nodeTag.Id;
             EnterEntry(entry);
             return true;
         }
 
-        public bool SelectOption(GameplayTag optionTag)
+        public bool Choose(GameplayTag optionTag)
         {
             if (!_isActive) return false;
-            var entry = FindEntry(_currentEntryId);
-            if (entry == null) return false;
 
-            DialogueOption chosen = null;
-            foreach (var opt in entry.Options)
-            {
-                if (opt.Tag.Id != optionTag.Id) continue;
-                if (GameplayTagCondition.EvaluateAll(opt.Conditions, _state))
-                    chosen = opt;
-                break;
-            }
-            if (chosen == null) return false;
+            var storyOption = FindCurrentOption(optionTag);
+            if (storyOption == null) return false;
+
+            var chosen = storyOption.RawOption;
+
+            // Fire before navigation so listeners can react to the selection itself.
+            OnChoice?.Invoke(Id, storyOption);
 
             foreach (var op in chosen.Operations)
                 op.Apply(_state);
 
-            // Record which option was chosen for this entry in the narrative state.
             _state.Apply(new GameplayTag(_currentEntryId), GameplayTagArithmetic.Set, chosen.Tag.Id);
             _history.Add(new HistoryEntry { EntryId = _currentEntryId, SelectedOption = chosen.Tag.Id });
 
             if (chosen.TargetEntry.Id == 0)
             {
-                CloseConversation(interrupted: false);
+                CloseInternal(interrupted: false);
             }
             else
             {
-                var target = FindEntry(chosen.TargetEntry.Id);
-                if (target == null) { CloseConversation(interrupted: false); return false; }
+                var target = FindEntryInternal(chosen.TargetEntry.Id);
+                if (target == null) { CloseInternal(interrupted: false); return false; }
                 _currentEntryId = chosen.TargetEntry.Id;
                 EnterEntry(target);
             }
@@ -115,24 +125,14 @@ namespace Heathen.Ogham
             return true;
         }
 
-        // SelectOptionByTag and SelectOption are identical — the tag IS the option identifier.
-        // Provided as a distinct method for protocol-link call sites (ogham://Option.Tag URLs).
-        public bool SelectOptionByTag(GameplayTag optionTag) => SelectOption(optionTag);
+        public void Close(bool interrupted = false) => CloseInternal(interrupted);
 
-        public void CloseConversation(bool interrupted = false)
-        {
-            if (!_isActive) return;
-            _isActive = false;
-            _currentEntryId = 0;
-            OnDialogueClosed?.Invoke(interrupted);
-        }
-
-        // Navigate back to a previously-visited entry. Clears narrative-state tags for all
-        // descendant entries (not side-effect tags — see ReturnTo design note in spec).
+        // Navigate back to a previously-visited entry.
+        // Clears narrative-state tags for all descendant entries (not side-effect tags).
         public bool ReturnTo(GameplayTag entryTag)
         {
             if (!_isActive) return false;
-            var entry = FindEntry(entryTag.Id);
+            var entry = FindEntryInternal(entryTag.Id);
             if (entry == null) return false;
 
             var descendants = new HashSet<ulong>();
@@ -141,28 +141,52 @@ namespace Heathen.Ogham
                 _state.Apply(new GameplayTag(id), GameplayTagArithmetic.Set, 0);
 
             _currentEntryId = entryTag.Id;
-            OnDialogueEntered?.Invoke(entry, GetAvailableOptions(entry));
+            var opts = BuildOptions(entry);
+            _currentOptions = opts;
+            _currentNode    = new StoryNode(entry, opts);
+            OnEntered?.Invoke(Id, _currentNode);
             return true;
         }
 
         // ── Query ─────────────────────────────────────────────────────────────
 
-        public List<DialogueOption> GetAvailableOptions()
+        public DialogueEntry FindEntry(GameplayTag tag) => FindEntryInternal(tag.Id);
+
+        // ── State / History management ────────────────────────────────────────
+
+        public void Execute(params GameplayTagOperation[] ops)
         {
-            var entry = CurrentEntry;
-            return entry != null ? GetAvailableOptions(entry) : new List<DialogueOption>();
+            foreach (var op in ops)
+                op.Apply(_state);
         }
 
-        public DialogueEntry FindEntry(GameplayTag tag) => FindEntry(tag.Id);
+        public void ClearNarrativeState() => _state.Clear();
 
-        // ── Save / Load ───────────────────────────────────────────────────────
+        public void ClearNarrativeState(GameplayTag tag)
+        {
+            var toRemove = _state.GetMatchingTags(tag);
+            foreach (var t in toRemove)
+                _state.RemoveTag(t);
+        }
 
-        public OghamSaveState CreateSaveState(string name)
+        public void ClearHistory() => _history.Clear();
+
+        public void ClearHistory(int steps)
+        {
+            int count = Math.Min(steps, _history.Count);
+            if (count > 0)
+                _history.RemoveRange(_history.Count - count, count);
+        }
+
+        // ── Persistence ───────────────────────────────────────────────────────
+
+        public OghamSaveState Snapshot(string name = "snapshot")
         {
             var snap = new OghamSaveState
             {
                 Uuid           = Guid.NewGuid().ToString(),
                 Name           = name,
+                StoryId        = Id.Id,
                 CurrentEntryId = _currentEntryId,
                 History        = new List<HistoryEntry>(_history),
             };
@@ -171,25 +195,38 @@ namespace Heathen.Ogham
             return snap;
         }
 
-        public void LoadSaveState(OghamSaveState state)
+        public void Restore(OghamSaveState state)
         {
+            _isActive       = false;
             _currentEntryId = state.CurrentEntryId;
             _state.Clear();
             foreach (var (tag, value) in state.State.GetAll())
                 _state.Apply(tag, GameplayTagArithmetic.Set, value);
             _history.Clear();
             _history.AddRange(state.History);
+            _currentNode    = null;
+            _currentOptions = Array.Empty<StoryOption>();
         }
 
-        public void ClearState()
-        {
-            _state.Clear();
-            _history.Clear();
-        }
+        // ── ECS / Burst ───────────────────────────────────────────────────────
 
-        public void ApplyOperation(GameplayTagOperation op) => op.Apply(_state);
+#if UNITY_ENTITIES
+        // Caller-owned NativeHashMap for read-only job access. Caller must Dispose.
+        public Unity.Collections.NativeHashMap<ulong, ulong> GetStateSnapshot(Unity.Collections.Allocator allocator) =>
+            _state.GetSnapshot(allocator);
+#endif
 
         // ── Private ───────────────────────────────────────────────────────────
+
+        private void CloseInternal(bool interrupted)
+        {
+            if (!_isActive) return;
+            _isActive       = false;
+            _currentEntryId = 0;
+            _currentNode    = null;
+            _currentOptions = Array.Empty<StoryOption>();
+            OnClosed?.Invoke(Id, interrupted);
+        }
 
         private void RebuildIndex()
         {
@@ -213,8 +250,6 @@ namespace Heathen.Ogham
                 _entryIndex.TryAdd(id, (assetIdx, entry));
             }
 
-            // Derive child relationships from connections so ReturnTo knows
-            // which entries to clear when stepping back in the graph.
             foreach (var entry in entries)
             {
                 var parentId = entry.Tag.Id;
@@ -233,7 +268,7 @@ namespace Heathen.Ogham
             }
         }
 
-        private DialogueEntry FindEntry(ulong id) =>
+        private DialogueEntry FindEntryInternal(ulong id) =>
             _entryIndex.TryGetValue(id, out var loc) ? loc.entry : null;
 
         private void CollectDescendants(ulong entryId, HashSet<ulong> results)
@@ -253,16 +288,27 @@ namespace Heathen.Ogham
         {
             foreach (var op in entry.EntryOperations)
                 op.Apply(_state);
-            OnDialogueEntered?.Invoke(entry, GetAvailableOptions(entry));
+
+            var opts     = BuildOptions(entry);
+            _currentOptions = opts;
+            _currentNode    = new StoryNode(entry, opts);
+            OnEntered?.Invoke(Id, _currentNode);
         }
 
-        private List<DialogueOption> GetAvailableOptions(DialogueEntry entry)
+        private IReadOnlyList<StoryOption> BuildOptions(DialogueEntry entry)
         {
-            var result = new List<DialogueOption>(entry.Options.Count);
+            var result = new List<StoryOption>(entry.Options.Count);
             foreach (var opt in entry.Options)
                 if (GameplayTagCondition.EvaluateAll(opt.Conditions, _state))
-                    result.Add(opt);
-            return result;
+                    result.Add(new StoryOption(opt, this));
+            return result.AsReadOnly();
+        }
+
+        private StoryOption FindCurrentOption(GameplayTag tag)
+        {
+            foreach (var opt in _currentOptions)
+                if (opt.Tag.Id == tag.Id) return opt;
+            return null;
         }
     }
 }

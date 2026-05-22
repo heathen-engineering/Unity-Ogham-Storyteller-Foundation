@@ -93,50 +93,124 @@ Dialogue.Start     → Audio, Localised, key "VO.Act1.Opening"
 
 Add an `OghamProcessor` component to a GameObject in your scene. In the Inspector, assign your `OghamCompiledData` asset (built after authoring), or assign `OghamData` assets directly to the **Auto Register** list for editor iteration.
 
-### 5. Drive the conversation from code
+### 5. Drive the conversation via Storyteller (recommended)
+
+`Storyteller` is the primary developer entry point — a static facade over the active `OghamProcessor`. No references or singletons to manage; just call `Storyteller.*` from anywhere.
 
 ```csharp
 using Heathen.Ogham;
-using Heathen.GameplayTags;
 
-// Start a conversation at a named entry
-bool started = OghamProcessor.Current.StartConversation(
-    GameplayTag.FromName("Dialogue.Start"));
+// Subscribe to events
+Storyteller.OnEntered += HandleNodeEntered;
+Storyteller.OnChoice  += opt => Debug.Log($"Player chose: {opt.GetText()}");
+Storyteller.OnClosed  += () => Debug.Log("Conversation ended");
 
-// Read the current entry and its available (condition-filtered) options
-DialogueEntry entry   = OghamProcessor.Current.CurrentEntry;
-var           options = OghamProcessor.Current.GetAvailableOptions();
+// Start a conversation — string is hashed automatically
+Storyteller.Enter("NPC.Blacksmith.Greeting");
 
-// Display content keys
-foreach (var key in entry.ContentKeys)
-    if (key.IsText)
-        Debug.Log(key.ResolveText()); // resolves Lexicon key or returns literal value
+void HandleNodeEntered(StoryNode node)
+{
+    // Typed content accessors by index (order matches the editor)
+    SpeakerName.text  = node.GetText(0);
+    MessageBody.text  = node.GetText(1);
+    Background.sprite = node.GetSprite(2);
 
-// Player selects an option
-OghamProcessor.Current.SelectOption(options[0].Tag);
-
-// React to transitions
-OghamProcessor.Current.OnDialogueEntered += (e, opts) =>
-    Debug.Log($"Entered: {e.TagPath}, {opts.Count} option(s)");
-
-OghamProcessor.Current.OnDialogueClosed  += interrupted =>
-    Debug.Log(interrupted ? "Conversation interrupted" : "Conversation ended cleanly");
+    // Spawn buttons for each available option
+    foreach (var option in node.Options)
+    {
+        var btn    = Instantiate(buttonPrefab, buttonContainer);
+        btn.label  = option.GetText();
+        btn.onClick.AddListener(option.Choose); // no Storyteller reference needed in the button
+    }
+}
 ```
 
-### 6. Save and load narrative state
+### 6. Narrative state and external systems
 
 ```csharp
-// Capture
-OghamSaveState save = OghamProcessor.Current.CreateSaveState("slot1");
-// Serialize save however you like (JsonUtility, etc.)
+// Read a subtree (e.g., the player's inventory as tracked by story operations)
+GameplayTagCollection inventory = Storyteller.ReadState("Inventory.Items");
+
+// Inject state from an external system (e.g., a shop transaction)
+Storyteller.ClearState("Inventory.Items");
+Storyteller.Execute(
+    new GameplayTagOperation { Tag = "Inventory.Items.Potion",      Arithmetic = GameplayTagArithmetic.Set, Value = 3 },
+    new GameplayTagOperation { Tag = "Inventory.Items.BronzeSword", Arithmetic = GameplayTagArithmetic.Set, Value = 1 }
+);
+
+// Clear history without touching state, or vice versa
+Storyteller.ClearHistory(5);  // remove last 5 entries
+Storyteller.ClearState();     // reset all story flags
+```
+
+### 7. Save and load
+
+```csharp
+// Capture — returns an OghamSaveState with current state + history
+OghamSaveState save = Storyteller.Snapshot("slot1");
+string json = JsonUtility.ToJson(save);  // or any other serialiser
 
 // Restore
-OghamProcessor.Current.LoadSaveState(save);
+Storyteller.Restore(JsonUtility.FromJson<OghamSaveState>(json));
+```
+
+### 8. Low-level access (advanced)
+
+If you need direct access to the underlying processor (ECS, multi-processor setups), `OghamProcessor.Current` is still available:
+
+```csharp
+OghamProcessor.Current.OnDialogueEntered += (entry, options) => { ... };
+OghamProcessor.Current.StartConversation(GameplayTag.FromName("Dialogue.Start"));
 ```
 
 -----
 
 ## Core Types
+
+### `Storyteller`
+
+| Member | Description |
+|--------|-------------|
+| `Enter(tag)` | Begin a conversation at the named node; accepts string, ulong, or GameplayTag |
+| `Choose(tag)` | Select an option; navigates to its target or closes if no target |
+| `Close()` | Force-close the conversation |
+| `OnEntered` | `event Action<StoryNode>` — fired when a node is entered |
+| `OnChoice` | `event Action<StoryOption>` — fired when `Choose()` is called, before navigation |
+| `OnClosed` | `event Action` — fired when the conversation ends |
+| `IsActive` | `true` while a conversation is in progress |
+| `Data` | Current `StoryNode`; `null` when not active |
+| `Options` | Pre-filtered `IReadOnlyList<StoryOption>` for the current node |
+| `History` | `IReadOnlyList<HistoryEntry>` — ordered visit log |
+| `ReadState(tag)` | Returns a `GameplayTagCollection` subset of state at/below `tag` |
+| `Execute(ops)` | Apply one or more `GameplayTagOperation` items to narrative state |
+| `ClearState()` | Clear all narrative state (does not clear history) |
+| `ClearState(tag)` | Clear all state tags at/below `tag` |
+| `ClearHistory()` | Clear all history (does not clear state) |
+| `ClearHistory(steps)` | Remove the last N history entries |
+| `Snapshot(name)` | Capture state + history into an `OghamSaveState` for serialisation |
+| `Restore(state)` | Restore from a previously captured snapshot |
+
+### `StoryNode`
+
+| Member | Description |
+|--------|-------------|
+| `Tag` | `GameplayTag` identity of this node (ulong at runtime) |
+| `ContentCount` | Number of content keys on this node |
+| `Options` | Pre-filtered `IReadOnlyList<StoryOption>` |
+| `GetText(index)` | Resolved string for the content key at `index` |
+| `GetSprite(index)` | Resolved `Sprite` for the content key at `index` |
+| `GetAudio(index)` | Resolved `AudioClip` for the content key at `index` |
+| `GetPrefab(index)` | Resolved `GameObject` for the content key at `index` |
+
+Content key index is **absolute** — matches the order the author placed keys in the editor. Type mismatches return `null` / `string.Empty` silently.
+
+### `StoryOption`
+
+| Member | Description |
+|--------|-------------|
+| `Tag` | `GameplayTag` identity (usable for tracking without string resolution) |
+| `GetText()` | Resolved display text (Lexicon-aware) |
+| `Choose()` | Advance the conversation by selecting this option |
 
 ### `DialogueEntry`
 
@@ -195,5 +269,5 @@ OghamProcessor.Current.LoadSaveState(save);
 
 | Namespace | Contents |
 |-----------|----------|
-| `Heathen.Ogham` | All runtime types: `OghamData`, `OghamCompiledData`, `OghamProcessorCore`, `OghamProcessor`, `DialogueEntry`, `DialogueOption`, `OghamContentKey`, `OghamSaveState`, ECS bakers |
+| `Heathen.Ogham` | All runtime types: `Storyteller`, `StoryNode`, `StoryOption`, `OghamData`, `OghamCompiledData`, `OghamProcessorCore`, `OghamProcessor`, `DialogueEntry`, `DialogueOption`, `OghamContentKey`, `OghamSaveState`, ECS bakers |
 | `Heathen.Ogham.Editor` | Editor-only: `OghamGraphEditorWindow`, `OghamCanvas`, `OghamTreePanel`, `OghamGraphMetadata`, all popup windows and custom drawers |

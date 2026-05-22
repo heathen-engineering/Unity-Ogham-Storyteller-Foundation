@@ -58,6 +58,9 @@ namespace Heathen.Ogham
     {
         public string Uuid;
         public string Name;
+        // Identity of the OghamStory this snapshot belongs to.
+        // Used by Storyteller.Restore to route the save to the correct story.
+        public ulong StoryId;
         public ulong CurrentEntryId;
         public GameplayTagCollection State = new();
         public List<HistoryEntry> History = new();

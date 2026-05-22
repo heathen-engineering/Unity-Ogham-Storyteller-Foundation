@@ -13,53 +13,53 @@ namespace Heathen.Ogham
         public GameObject Prefab;
     }
 
-    // Listens to OghamProcessor events and spawns / despawns Prefabs based on
-    // Text-type OghamContentKey slots found in each DialogueEntry's ContentKeys list.
+    // Listens to Storyteller events and spawns / despawns Prefabs based on
+    // Text-type content key slots in each node's ContentKeys list.
     //
     // Pair up each content key role (narrator, speaker, body, etc.) with a Prefab
     // in the Templates list. The spawner resolves text keys and manages instances
     // according to the chosen Mode and CloseMode.
     public class OghamTemplateSpawner : MonoBehaviour
     {
-        [Tooltip("If null, searches for OghamProcessor on the same GameObject.")]
-        public OghamProcessor Processor;
+        [Tooltip("Track the current main story, or a specific named story.")]
+        [SerializeField] private StoryTarget _target = StoryTarget.Main;
+
+        [Tooltip("Dot-path tag identifying the story to track when Target is Specific.")]
+        [SerializeField] private string _storyTagPath;
 
         public OghamInstantiationMode Mode      = OghamInstantiationMode.Diff;
         public OghamCloseMode         CloseMode = OghamCloseMode.Clear;
         public OghamLoadMode          LoadMode  = OghamLoadMode.PreWarm;
 
-        // Maps TextKey resolved values to Prefabs.
         public List<OghamTemplatePair> Templates = new();
 
-        // key string -> active instances spawned for that key this entry.
         private readonly Dictionary<string, List<GameObject>> _active = new();
-
-        private void Awake()
-        {
-            Processor ??= GetComponent<OghamProcessor>();
-        }
 
         private void OnEnable()
         {
-            if (Processor != null)
-            {
-                Processor.OnDialogueEntered += HandleEntered;
-                Processor.OnDialogueClosed  += HandleClosed;
-            }
+            Storyteller.OnEntered += HandleEntered;
+            Storyteller.OnClosed  += HandleClosed;
         }
 
         private void OnDisable()
         {
-            if (Processor != null)
-            {
-                Processor.OnDialogueEntered -= HandleEntered;
-                Processor.OnDialogueClosed  -= HandleClosed;
-            }
+            Storyteller.OnEntered -= HandleEntered;
+            Storyteller.OnClosed  -= HandleClosed;
         }
 
-        private void HandleEntered(DialogueEntry entry, List<DialogueOption> options)
+        private bool IsTarget(GameplayTag storyId)
         {
-            var newKeys = ResolveKeys(entry);
+            if (_target == StoryTarget.Main)
+                return storyId.Id == Storyteller.MainStoryId.Id;
+            if (string.IsNullOrEmpty(_storyTagPath)) return false;
+            return storyId.Id == GameplayTag.FromName(_storyTagPath).Id;
+        }
+
+        private void HandleEntered(GameplayTag storyId, StoryNode node)
+        {
+            if (!IsTarget(storyId)) return;
+
+            var newKeys = ResolveKeys(node);
 
             switch (Mode)
             {
@@ -76,21 +76,22 @@ namespace Heathen.Ogham
             }
 
             if (LoadMode == OghamLoadMode.PreWarm)
-                PreWarm(options);
+                PreWarm(storyId, node.Options);
         }
 
-        private void HandleClosed(bool interrupted)
+        private void HandleClosed(GameplayTag storyId)
         {
+            if (!IsTarget(storyId)) return;
             if (CloseMode == OghamCloseMode.Clear)
                 DestroyAll();
         }
 
-        private List<string> ResolveKeys(DialogueEntry entry)
+        private List<string> ResolveKeys(StoryNode node)
         {
-            var keys = new List<string>(entry.ContentKeys.Count);
-            foreach (var key in entry.ContentKeys)
+            var keys = new List<string>(node.ContentCount);
+            for (int i = 0; i < node.ContentCount; i++)
             {
-                var resolved = key.ResolveText();
+                var resolved = node.GetText(i);
                 if (!string.IsNullOrEmpty(resolved))
                     keys.Add(resolved);
             }
@@ -99,7 +100,6 @@ namespace Heathen.Ogham
 
         private void ApplyDiff(List<string> newKeys)
         {
-            // Remove instances whose key is no longer in the new entry.
             var toRemove = new List<string>();
             foreach (var kvp in _active)
                 if (!newKeys.Contains(kvp.Key))
@@ -112,7 +112,6 @@ namespace Heathen.Ogham
                 _active.Remove(key);
             }
 
-            // Spawn new entries not already active.
             foreach (var key in newKeys)
                 if (!_active.ContainsKey(key))
                     SpawnForKey(key);
@@ -148,19 +147,21 @@ namespace Heathen.Ogham
 
         // One-node lookahead: pre-load prefabs referenced by option target entries
         // so they are resident before the player makes a selection.
-        private void PreWarm(List<DialogueOption> options)
+        private void PreWarm(GameplayTag storyId, IReadOnlyList<StoryOption> options)
         {
-            if (Processor == null) return;
+            var story = Storyteller.GetStory(storyId);
+            if (story == null) return;
+
             foreach (var opt in options)
             {
-                if (opt.TargetEntry.Id == 0) continue;
-                var target = Processor.FindEntry(opt.TargetEntry);
+                if (!opt.HasTarget) continue;
+                var target = story.FindEntry(opt.TargetTag);
                 if (target == null) continue;
-                foreach (var contentKey in target.ContentKeys)
+                for (int i = 0; i < target.ContentKeys.Count; i++)
                 {
-                    var key = contentKey.ResolveText();
-                    if (string.IsNullOrEmpty(key)) continue;
-                    _ = FindPrefab(key);
+                    var key = target.ContentKeys[i].ResolveText();
+                    if (!string.IsNullOrEmpty(key))
+                        _ = FindPrefab(key);
                 }
             }
         }

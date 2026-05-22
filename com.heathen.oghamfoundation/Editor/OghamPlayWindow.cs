@@ -16,14 +16,13 @@ namespace Heathen.Ogham.Editor
             w._assets.Clear();
             w._assets.AddRange(assets);
             w.BuildTagList(startTagPath);
-            w.ResetProcessor();
+            w.ResetStory();
         }
 
         private readonly List<OghamData> _assets = new();
-        private OghamProcessorCore _core;
+        private OghamStory _story;
 
-        private DialogueEntry        _current;
-        private List<DialogueOption> _options = new();
+        private StoryNode            _current;
         private Vector2              _stateScroll;
         private Vector2              _historyScroll;
 
@@ -38,9 +37,18 @@ namespace Heathen.Ogham.Editor
         private void OnEnable()
         {
             BuildTagList(null);
-            ResetProcessor();
+            ResetStory();
         }
-        private void OnDisable() => _core = null;
+
+        private void OnDisable()
+        {
+            if (_story != null)
+            {
+                _story.OnEntered -= HandleEntered;
+                _story.OnClosed  -= HandleClosed;
+                _story = null;
+            }
+        }
 
         private void BuildTagList(string preselect)
         {
@@ -66,17 +74,22 @@ namespace Heathen.Ogham.Editor
             }
         }
 
-        private void ResetProcessor()
+        private void ResetStory()
         {
-            _core    = new OghamProcessorCore();
+            if (_story != null)
+            {
+                _story.OnEntered -= HandleEntered;
+                _story.OnClosed  -= HandleClosed;
+            }
+
+            _story   = new OghamStory(new GameplayTag(GameplayTagRegistry.Hash("Editor.Play")));
             _current = null;
-            _options.Clear();
             _tagNames.Clear();
 
             foreach (var asset in _assets)
             {
                 if (asset == null) continue;
-                _core.RegisterData(asset);
+                _story.RegisterData(asset);
                 foreach (var entry in asset.Entries)
                 {
                     if (entry.Tag.IsValid) _tagNames[entry.Tag.Id] = entry.TagPath;
@@ -85,8 +98,20 @@ namespace Heathen.Ogham.Editor
                 }
             }
 
-            _core.OnDialogueEntered += (entry, opts) => { _current = entry; _options = opts; Repaint(); };
-            _core.OnDialogueClosed  += _              => { _current = null; _options.Clear(); Repaint(); };
+            _story.OnEntered += HandleEntered;
+            _story.OnClosed  += HandleClosed;
+        }
+
+        private void HandleEntered(GameplayTag storyId, StoryNode node)
+        {
+            _current = node;
+            Repaint();
+        }
+
+        private void HandleClosed(GameplayTag storyId, bool interrupted)
+        {
+            _current = null;
+            Repaint();
         }
 
         private void OnGUI()
@@ -106,9 +131,9 @@ namespace Heathen.Ogham.Editor
                 if (GUILayout.Button("Start", EditorStyles.toolbarButton, GUILayout.Width(50)))
                     TryStart();
                 if (GUILayout.Button("Reset", EditorStyles.toolbarButton, GUILayout.Width(50)))
-                    ResetProcessor();
+                    ResetStory();
                 if (GUILayout.Button("Close", EditorStyles.toolbarButton, GUILayout.Width(50)))
-                    _core.CloseConversation(interrupted: true);
+                    _story.Close(interrupted: true);
             }
 
             EditorGUILayout.Space(4f);
@@ -135,7 +160,7 @@ namespace Heathen.Ogham.Editor
             if (_startTagPaths.Length == 0) return;
             var path = _startTagPaths[_startTagIdx];
             var tag  = GameplayTag.FromName(path);
-            if (!_core.StartConversation(tag))
+            if (!_story.Enter(tag))
                 EditorUtility.DisplayDialog("Ogham Play", $"Entry tag not found: {path}", "OK");
         }
 
@@ -144,32 +169,33 @@ namespace Heathen.Ogham.Editor
             EditorGUILayout.LabelField("Current Entry", EditorStyles.boldLabel);
             EditorGUILayout.LabelField("Tag", ResolveTagName(_current.Tag.Id));
 
-            foreach (var key in _current.ContentKeys)
+            for (int i = 0; i < _current.ContentCount; i++)
             {
-                var resolved = key.ResolveText();
-                EditorGUILayout.LabelField(string.IsNullOrEmpty(resolved) ? key.KeyOrValue : resolved,
-                    EditorStyles.wordWrappedLabel);
+                var resolved = _current.GetText(i);
+                var display  = string.IsNullOrEmpty(resolved) ? _current.GetRawKey(i) : resolved;
+                if (!string.IsNullOrEmpty(display))
+                    EditorGUILayout.LabelField(display, EditorStyles.wordWrappedLabel);
             }
         }
 
         private void DrawOptions()
         {
             EditorGUILayout.LabelField("Options", EditorStyles.boldLabel);
-            if (_options.Count == 0)
+            if (_current.Options.Count == 0)
             {
                 EditorGUILayout.LabelField("(no available options)", EditorStyles.miniLabel);
                 return;
             }
 
-            foreach (var opt in _options)
+            foreach (var opt in _current.Options)
             {
-                var label = opt.TextKey.Resolve();
+                var label = opt.GetText();
                 if (string.IsNullOrEmpty(label))
                     label = opt.Tag.IsValid ? ResolveTagName(opt.Tag.Id) : "Option";
 
                 if (GUILayout.Button(label))
                 {
-                    _core.SelectOption(opt.Tag);
+                    _story.Choose(opt.Tag);
                     GUIUtility.ExitGUI();
                 }
             }
@@ -179,7 +205,7 @@ namespace Heathen.Ogham.Editor
         {
             EditorGUILayout.LabelField("Narrative State", EditorStyles.boldLabel);
             _stateScroll = EditorGUILayout.BeginScrollView(_stateScroll, GUILayout.Height(80f));
-            foreach (var (tag, value) in _core.NarrativeState.GetAll())
+            foreach (var (tag, value) in _story.NarrativeState.GetAll())
                 EditorGUILayout.LabelField(ResolveTagName(tag.Id), value.ToString(), EditorStyles.miniLabel);
             EditorGUILayout.EndScrollView();
         }
@@ -188,7 +214,7 @@ namespace Heathen.Ogham.Editor
         {
             EditorGUILayout.LabelField("History", EditorStyles.boldLabel);
             _historyScroll = EditorGUILayout.BeginScrollView(_historyScroll, GUILayout.Height(80f));
-            var history = _core.History;
+            var history = _story.History;
             for (int i = history.Count - 1; i >= 0; i--)
             {
                 var h       = history[i];
@@ -200,7 +226,7 @@ namespace Heathen.Ogham.Editor
                     EditorGUILayout.LabelField($"{eName} → {optName}", EditorStyles.miniLabel);
                     if (GUILayout.Button("Return To", EditorStyles.miniButton, GUILayout.Width(68)))
                     {
-                        _core.ReturnTo(new GameplayTag(h.EntryId));
+                        _story.ReturnTo(new GameplayTag(h.EntryId));
                         GUIUtility.ExitGUI();
                     }
                 }
