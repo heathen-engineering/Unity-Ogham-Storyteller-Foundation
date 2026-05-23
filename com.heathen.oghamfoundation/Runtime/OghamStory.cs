@@ -15,6 +15,7 @@ namespace Heathen.Ogham
     {
         private readonly List<OghamData>         _assets         = new();
         private readonly List<OghamCompiledData> _compiledAssets = new();
+        private readonly List<DialogueEntry>     _runtimeEntries = new();
         private readonly Dictionary<ulong, (int assetIdx, DialogueEntry entry)> _entryIndex = new();
         private readonly Dictionary<ulong, HashSet<ulong>>                       _childIndex = new();
 
@@ -73,9 +74,44 @@ namespace Heathen.Ogham
         {
             _assets.Clear();
             _compiledAssets.Clear();
+            _runtimeEntries.Clear();
             _entryIndex.Clear();
             _childIndex.Clear();
         }
+
+        // ── Runtime entry registration ────────────────────────────────────────
+
+        // Register a single entry created at runtime (e.g. from a mod or UGC manifest).
+        public void RegisterEntry(DialogueEntry entry)
+        {
+            if (entry == null || entry.Tag.Id == 0) return;
+            if (!_runtimeEntries.Contains(entry))
+            {
+                _runtimeEntries.Add(entry);
+                RebuildIndex();
+            }
+        }
+
+        public void RegisterEntries(IEnumerable<DialogueEntry> entries)
+        {
+            if (entries == null) return;
+            bool changed = false;
+            foreach (var e in entries)
+            {
+                if (e == null || e.Tag.Id == 0) continue;
+                if (!_runtimeEntries.Contains(e)) { _runtimeEntries.Add(e); changed = true; }
+            }
+            if (changed) RebuildIndex();
+        }
+
+        public void UnregisterEntry(GameplayTag tag)
+        {
+            int idx = _runtimeEntries.FindIndex(e => e.Tag.Id == tag.Id);
+            if (idx >= 0) { _runtimeEntries.RemoveAt(idx); RebuildIndex(); }
+        }
+
+        // Force a full index rebuild after external modifications to runtime entries.
+        public void RefreshIndex() => RebuildIndex();
 
         // ── Conversation ──────────────────────────────────────────────────────
 
@@ -238,6 +274,8 @@ namespace Heathen.Ogham
 
             for (int i = 0; i < _compiledAssets.Count; i++)
                 IndexEntries(_compiledAssets[i]?.Entries, _assets.Count + i);
+
+            IndexEntries(_runtimeEntries, -1);
         }
 
         private void IndexEntries(List<DialogueEntry> entries, int assetIdx)
