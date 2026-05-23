@@ -122,12 +122,42 @@ namespace Heathen.Ogham
             {
                 if (!string.IsNullOrWhiteSpace(em.TagPath))
                     GameplayTagRegistry.Register(em.TagPath);
+
+                if (em.EntryOperations != null)
+                    foreach (var op in em.EntryOperations)
+                        if (!string.IsNullOrWhiteSpace(op.TagPath))
+                            GameplayTagRegistry.Register(op.TagPath);
+
                 foreach (var opt in em.Options)
                 {
                     if (!string.IsNullOrWhiteSpace(opt.TagPath))
                         GameplayTagRegistry.Register(opt.TagPath);
                     if (!string.IsNullOrWhiteSpace(opt.TargetEntryPath))
                         GameplayTagRegistry.Register(opt.TargetEntryPath);
+
+                    if (opt.Conditions != null)
+                        foreach (var cond in opt.Conditions)
+                        {
+                            if (!string.IsNullOrWhiteSpace(cond.TagPath))
+                                GameplayTagRegistry.Register(cond.TagPath);
+                            if (!string.IsNullOrWhiteSpace(cond.CompareTagPath))
+                                GameplayTagRegistry.Register(cond.CompareTagPath);
+                        }
+
+                    if (opt.Operations != null)
+                        foreach (var op in opt.Operations)
+                        {
+                            if (!string.IsNullOrWhiteSpace(op.TagPath))
+                                GameplayTagRegistry.Register(op.TagPath);
+                            if (op.Conditions != null)
+                                foreach (var cond in op.Conditions)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(cond.TagPath))
+                                        GameplayTagRegistry.Register(cond.TagPath);
+                                    if (!string.IsNullOrWhiteSpace(cond.CompareTagPath))
+                                        GameplayTagRegistry.Register(cond.CompareTagPath);
+                                }
+                        }
                 }
             }
         }
@@ -210,7 +240,7 @@ namespace Heathen.Ogham
         {
             Enum.TryParse<GameplayTagComparisonOp>(cm.Comparison, true, out var comp);
             Enum.TryParse<GameplayTagLogicOp>(cm.LogicOp,         true, out var logic);
-            return new GameplayTagCondition
+            var cond = new GameplayTagCondition
             {
                 Tag          = GameplayTag.FromName(cm.TagPath),
                 Comparison   = comp,
@@ -218,6 +248,9 @@ namespace Heathen.Ogham
                 ExactMatch   = cm.ExactMatch,
                 LogicOp      = logic,
             };
+            if (!string.IsNullOrWhiteSpace(cm.CompareTagPath))
+                cond.CompareTag = GameplayTag.FromName(cm.CompareTagPath);
+            return cond;
         }
 
         private static DialogueOption BuildOption(OghamOptionManifest om)
@@ -314,18 +347,20 @@ namespace Heathen.Ogham
         }
 
         public OghamOptionBuilder WithCondition(string tagPath,
-                                                string comparison   = "Exists",
-                                                ulong  compareValue = 1,
-                                                bool   exactMatch   = true,
-                                                string logicOp      = "And")
+                                                string comparison    = "Exists",
+                                                ulong  compareValue  = 1,
+                                                bool   exactMatch    = true,
+                                                string logicOp       = "And",
+                                                string compareTagPath = "")
         {
             _manifest.Conditions.Add(new OghamConditionManifest
             {
-                TagPath      = tagPath,
-                Comparison   = comparison,
-                CompareValue = compareValue,
-                ExactMatch   = exactMatch,
-                LogicOp      = logicOp,
+                TagPath         = tagPath,
+                Comparison      = comparison,
+                CompareValue    = compareValue,
+                ExactMatch      = exactMatch,
+                LogicOp         = logicOp,
+                CompareTagPath  = compareTagPath,
             });
             return this;
         }
@@ -341,6 +376,53 @@ namespace Heathen.Ogham
             return this;
         }
 
+        // Returns a sub-builder for an operation that carries its own conditions.
+        // Call .Done() to return to the option builder.
+        public OghamOperationBuilder BeginOperation(string tagPath, string arithmetic = "Set", ulong value = 1)
+        {
+            var manifest = new OghamOperationManifest
+            {
+                TagPath    = tagPath,
+                Arithmetic = arithmetic,
+                Value      = value,
+            };
+            _manifest.Operations.Add(manifest);
+            return new OghamOperationBuilder(this, manifest);
+        }
+
         public OghamEntryBuilder Done() => _parent;
+    }
+
+    public class OghamOperationBuilder
+    {
+        private readonly OghamOptionBuilder    _parent;
+        private readonly OghamOperationManifest _manifest;
+
+        internal OghamOperationBuilder(OghamOptionBuilder parent, OghamOperationManifest manifest)
+        {
+            _parent   = parent;
+            _manifest = manifest;
+        }
+
+        public OghamOperationBuilder WithCondition(string tagPath,
+                                                   string comparison    = "Exists",
+                                                   ulong  compareValue  = 1,
+                                                   bool   exactMatch    = true,
+                                                   string logicOp       = "And",
+                                                   string compareTagPath = "")
+        {
+            _manifest.Conditions.Add(new OghamConditionManifest
+            {
+                TagPath         = tagPath,
+                Comparison      = comparison,
+                CompareValue    = compareValue,
+                ExactMatch      = exactMatch,
+                LogicOp         = logicOp,
+                CompareTagPath  = compareTagPath,
+            });
+            return this;
+        }
+
+        public OghamOptionBuilder Done() => _parent;
     }
 }
