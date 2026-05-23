@@ -30,7 +30,7 @@ namespace Heathen.Ogham
     [CreateAssetMenu(menuName = "Heathen/Ogham/Compiled Story", fileName = "OghamStory")]
     public class OghamCompiledData : ScriptableObject
     {
-        [SerializeField] internal List<DialogueEntry> Entries = new();
+        [SerializeField] public List<DialogueEntry> Entries = new();
 
         // Set by OghamImporter when compiled from a .ogham source file.
         // StorytellerRegistry uses this as the story identity when _storyTagPath is not set.
@@ -167,7 +167,7 @@ namespace Heathen.Ogham
         // Deep-copies an entry, converting Text ContentKeys to TMPro markup.
         // Pure-link ContentKeys (entire key = one [display](tag)) are dropped —
         // they exist only as options, not as displayed text.
-        internal static DialogueEntry CompileEntry(DialogueEntry src)
+        public static DialogueEntry CompileEntry(DialogueEntry src)
         {
             var dst = new DialogueEntry { TagPath = src.TagPath };
 
