@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Heathen.GameplayTags;
@@ -18,10 +19,25 @@ namespace Heathen.Ogham
     /// (Tools → Heathen → Ogham Storyteller).
     /// </para>
     /// </summary>
+    [Serializable]
+    public struct OghamCompiledLocale
+    {
+        public string Culture;
+        public string Key;
+        public string Value;
+    }
+
     [CreateAssetMenu(menuName = "Heathen/Ogham/Compiled Story", fileName = "OghamStory")]
     public class OghamCompiledData : ScriptableObject
     {
         [SerializeField] internal List<DialogueEntry> Entries = new();
+
+        // Set by OghamImporter when compiled from a .ogham source file.
+        // StorytellerRegistry uses this as the story identity when _storyTagPath is not set.
+        public string StoryTagPath = string.Empty;
+
+        // Inline localisations from the .ogham source — injected into LexiconRegistry on registration.
+        public OghamCompiledLocale[] Localisations = System.Array.Empty<OghamCompiledLocale>();
 
         // GUIDs of source OghamData authoring assets — editor side only.
         // Stored as strings to avoid Unity pulling OghamData assets into player builds
@@ -151,7 +167,7 @@ namespace Heathen.Ogham
         // Deep-copies an entry, converting Text ContentKeys to TMPro markup.
         // Pure-link ContentKeys (entire key = one [display](tag)) are dropped —
         // they exist only as options, not as displayed text.
-        private static DialogueEntry CompileEntry(DialogueEntry src)
+        internal static DialogueEntry CompileEntry(DialogueEntry src)
         {
             var dst = new DialogueEntry { TagPath = src.TagPath };
 

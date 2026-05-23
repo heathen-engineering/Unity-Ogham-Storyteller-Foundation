@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
@@ -18,12 +19,24 @@ namespace Heathen.Ogham.Editor
             w.LoadAsset(data);
         }
 
+        // Opens a .ogham source file in the graph editor. Called from OghamImporterEditor
+        // and from LoadAllAssets when the window opens.
+        public static void OpenOghamFile(string assetPath)
+        {
+            var w = GetWindow<OghamGraphEditorWindow>("Ogham Storyteller");
+            w.LoadOghamFile(assetPath);
+        }
+
         private OghamCanvas    _canvas;
         private OghamTreePanel _treePanel;
         private IMGUIContainer _canvasContainer;
 
         private bool _snapToGrid;
         private readonly List<OghamData> _openAssets = new();
+
+        // Tracks .ogham JSON-backed assets (synthetic, not in AssetDatabase).
+        // Key: synthetic OghamData. Value: (parsed document, AssetDatabase-relative path).
+        private readonly Dictionary<OghamData, (OghamJsonDocument Doc, string Path)> _jsonBacked = new();
 
         private void CreateGUI()
         {
@@ -95,6 +108,58 @@ namespace Heathen.Ogham.Editor
             _treePanel?.Rebuild();
         }
 
+        // ── .ogham file I/O ───────────────────────────────────────────────────
+
+        private void LoadOghamFile(string assetPath)
+        {
+            // Ignore if a file at this path is already open.
+            foreach (var kv in _jsonBacked)
+                if (kv.Value.Path == assetPath) return;
+
+            string json;
+            try { json = File.ReadAllText(assetPath); }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Ogham] Cannot read {assetPath}: {e.Message}");
+                return;
+            }
+
+            var doc  = OghamJsonDocument.Parse(json);
+            var data = doc.ToOghamData();
+            var meta = doc.ToMetadata();
+
+            data.name = Path.GetFileNameWithoutExtension(assetPath);
+            meta.name = data.name + "_editor";
+            data.BuildIndex(); // synthesise inline-link options for the graph editor
+
+            _jsonBacked[data] = (doc, assetPath);
+            _openAssets.Add(data);
+            _canvas?.LoadSyntheticAsset(data, meta);
+            _treePanel?.AddAsset(data);
+        }
+
+        // Writes all JSON-backed assets back to their source .ogham files and triggers reimport.
+        private void SaveOghamFiles()
+        {
+            foreach (var kv in _jsonBacked)
+            {
+                var data = kv.Key;
+                var doc  = kv.Value.Doc;
+                var path = kv.Value.Path;
+                var meta = _canvas?.GetMeta(data);
+                doc.SyncFrom(data, meta);
+                try
+                {
+                    File.WriteAllText(path, doc.ToJson());
+                    AssetDatabase.ImportAsset(path); // refresh compiled sub-assets
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"[Ogham] Save failed for {path}: {e.Message}");
+                }
+            }
+        }
+
         // Called by OghamAssetWatcher when assets are deleted from the project.
         public void UnloadDeletedAssets(string[] deletedPaths)
         {
@@ -117,12 +182,23 @@ namespace Heathen.Ogham.Editor
 
         private void LoadAllAssets()
         {
+            // Load .asset OghamData files.
             var guids = AssetDatabase.FindAssets("t:OghamData");
             foreach (var guid in guids)
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
                 var data = AssetDatabase.LoadAssetAtPath<OghamData>(path);
                 if (data != null) LoadAsset(data);
+            }
+
+            // Load .ogham source files (synthetic assets, not in AssetDatabase).
+            var dataPath = Application.dataPath;
+            if (!Directory.Exists(dataPath)) return;
+            foreach (var absPath in Directory.GetFiles(dataPath, "*.ogham", SearchOption.AllDirectories))
+            {
+                // Convert absolute filesystem path to AssetDatabase-relative path.
+                var relPath = "Assets" + absPath.Substring(dataPath.Length).Replace('\\', '/');
+                LoadOghamFile(relPath);
             }
         }
 
@@ -137,6 +213,13 @@ namespace Heathen.Ogham.Editor
 
                 if (GUILayout.Button("Add Entry", EditorStyles.toolbarButton, GUILayout.Width(76)))
                     ShowAddEntryMenu();
+
+                if (_jsonBacked.Count > 0)
+                {
+                    GUILayout.Space(4f);
+                    if (GUILayout.Button("Save .ogham", EditorStyles.toolbarButton, GUILayout.Width(84)))
+                        SaveOghamFiles();
+                }
 
                 GUILayout.Space(8f);
 
@@ -207,6 +290,26 @@ namespace Heathen.Ogham.Editor
         // ── New file ──────────────────────────────────────────────────────────
 
         private void ShowNewAssetDialog()
+        {
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("New .ogham file"), false, ShowNewOghamFileDialog);
+            menu.AddItem(new GUIContent("New .asset file (legacy)"), false, ShowNewLegacyAssetDialog);
+            menu.ShowAsContext();
+        }
+
+        private void ShowNewOghamFileDialog()
+        {
+            var path = EditorUtility.SaveFilePanelInProject(
+                "New Ogham Story File", "MyStory", "ogham",
+                "Create a new .ogham story source file.", "Assets");
+            if (string.IsNullOrEmpty(path)) return;
+            var doc = OghamJsonDocument.CreateNew();
+            File.WriteAllText(path, doc.ToJson());
+            AssetDatabase.ImportAsset(path);
+            LoadOghamFile(path);
+        }
+
+        private void ShowNewLegacyAssetDialog()
         {
             var path = EditorUtility.SaveFilePanelInProject(
                 "New Dialogue File", "OghamData", "asset",
@@ -328,6 +431,7 @@ namespace Heathen.Ogham.Editor
         private void HandleAssetClosed(OghamData asset)
         {
             _openAssets.Remove(asset);
+            _jsonBacked.Remove(asset);
             _canvas?.UnloadAsset(asset);
             _treePanel?.RemoveAsset(asset);
         }
