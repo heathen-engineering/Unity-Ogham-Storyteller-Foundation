@@ -86,6 +86,9 @@ namespace Heathen.Ogham
         //   "Less", "LessEqual", "Greater", "GreaterEqual"
         public string Comparison   = "Exists";
         public ulong  CompareValue = 1;
+        // When non-empty, the right-hand side is drawn from the named tag's state value
+        // instead of CompareValue. Enables tag-vs-tag comparisons, e.g. Total <= Money.
+        public string CompareTagPath = string.Empty;
         public bool   ExactMatch   = true;
         // GameplayTagLogicOp name: "And", "Or", "Xor"
         public string LogicOp      = "And";
