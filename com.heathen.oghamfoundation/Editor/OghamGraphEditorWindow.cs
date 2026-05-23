@@ -42,10 +42,7 @@ namespace Heathen.Ogham.Editor
         {
             _canvas = new OghamCanvas(this);
 
-            var root    = rootVisualElement;
-            var toolbar = new IMGUIContainer(DrawToolbar) { style = { height = 22f } };
-            root.Add(toolbar);
-
+            var root  = rootVisualElement;
             var split = new TwoPaneSplitView(0, 220f, TwoPaneSplitViewOrientation.Horizontal);
             root.Add(split);
 
@@ -55,6 +52,7 @@ namespace Heathen.Ogham.Editor
             _treePanel.OnAssetClosed   += HandleAssetClosed;
             split.Add(_treePanel);
 
+            // Single IMGUIContainer for both toolbar and canvas — reduces GL surface count on Linux.
             _canvasContainer = new IMGUIContainer(DrawCanvas) { style = { flexGrow = 1f } };
             split.Add(_canvasContainer);
 
@@ -63,14 +61,23 @@ namespace Heathen.Ogham.Editor
             _treePanel.ColorGetter  = data => _canvas.GetAssetColor(data);
             _treePanel.ColorSetter  = (data, color) => { _canvas.SetAssetColor(data, color); Repaint(); };
 
-            LoadAllAssets();
+            // Defer asset loading to avoid triggering AssetDatabase writes (and assembly reloads)
+            // while the editor is still initializing — particularly during window restoration on startup.
+            EditorApplication.delayCall += LoadAllAssets;
         }
 
         private void DrawCanvas()
         {
             var r = _canvasContainer.contentRect;
-            if (r.width < 2f || r.height < 2f) return;
-            _canvas.Draw(r);
+            if (r.width < 2f) return;
+
+            // Draw toolbar in the top 22 px of the single IMGUI container.
+            const float ToolbarH = 22f;
+            using (new GUILayout.AreaScope(new Rect(0f, 0f, r.width, ToolbarH)))
+                DrawToolbar();
+
+            if (r.height <= ToolbarH) return;
+            _canvas.Draw(new Rect(0f, ToolbarH, r.width, r.height - ToolbarH));
         }
 
         private void OnEnable()
@@ -87,6 +94,16 @@ namespace Heathen.Ogham.Editor
                 _treePanel.OnAssetSelected -= HandleAssetSelected;
                 _treePanel.OnAssetClosed   -= HandleAssetClosed;
             }
+
+            // Destroy synthetic ScriptableObjects (created from .ogham JSON files, not in AssetDatabase)
+            // so they don't accumulate in Unity's object system across assembly reloads.
+            foreach (var kv in _jsonBacked)
+            {
+                if (_canvas != null) { var m = _canvas.GetMeta(kv.Key); if (m != null) Object.DestroyImmediate(m); }
+                _openAssets.Remove(kv.Key); // evict before destroy so LoadAllAssets re-discovers from file
+                if (kv.Key != null) Object.DestroyImmediate(kv.Key);
+            }
+            _jsonBacked.Clear();
         }
 
         // ── Public API ────────────────────────────────────────────────────────
@@ -182,6 +199,18 @@ namespace Heathen.Ogham.Editor
 
         private void LoadAllAssets()
         {
+            // Guard: if the window was destroyed before delayCall fired, do nothing.
+            if (this == null) return;
+
+            // Restore any assets that survived an assembly reload (already in _openAssets
+            // but not yet in the canvas or tree panel since those are rebuilt in CreateGUI).
+            foreach (var asset in _openAssets)
+            {
+                if (asset == null) continue;
+                _canvas?.LoadAsset(asset);
+                _treePanel?.AddAsset(asset);
+            }
+
             // Load .asset OghamData files.
             var guids = AssetDatabase.FindAssets("t:OghamData");
             foreach (var guid in guids)
@@ -430,10 +459,20 @@ namespace Heathen.Ogham.Editor
 
         private void HandleAssetClosed(OghamData asset)
         {
+            bool wasSynthetic = _jsonBacked.ContainsKey(asset);
+            var syntheticMeta = wasSynthetic ? _canvas?.GetMeta(asset) : null;
+
             _openAssets.Remove(asset);
             _jsonBacked.Remove(asset);
             _canvas?.UnloadAsset(asset);
             _treePanel?.RemoveAsset(asset);
+
+            // Destroy synthetic ScriptableObjects that were never added to the AssetDatabase.
+            if (wasSynthetic)
+            {
+                if (syntheticMeta != null) Object.DestroyImmediate(syntheticMeta);
+                if (asset         != null) Object.DestroyImmediate(asset);
+            }
         }
     }
 }
