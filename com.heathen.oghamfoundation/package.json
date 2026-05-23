@@ -1,7 +1,7 @@
 {
     "name": "com.heathen.oghamfoundation",
     "displayName": "Ogham Storyteller Foundation",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "unity": "6000.0",
     "author": {
         "name": "Heathen Group",
@@ -19,6 +19,7 @@
     ],
     "dependencies": {
         "com.heathen.gameplaytags": "1.0.0",
-        "com.heathen.lexiconfoundation": "1.0.0"
+        "com.heathen.lexiconfoundation": "1.0.0",
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
     }
 }

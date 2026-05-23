@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using Heathen.GameplayTags;
@@ -54,9 +54,9 @@ namespace Heathen.Ogham.Editor
     // }
     internal class OghamJsonDocument
     {
-        private JsonObject _root;
+        private JObject _root;
 
-        private OghamJsonDocument(JsonObject root) => _root = root;
+        private OghamJsonDocument(JObject root) => _root = root;
 
         // ── Factory ───────────────────────────────────────────────────────────
 
@@ -64,46 +64,46 @@ namespace Heathen.Ogham.Editor
         {
             try
             {
-                var root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+                var root = JToken.Parse(json) as JObject ?? new JObject();
                 return new OghamJsonDocument(root);
             }
             catch
             {
-                return new OghamJsonDocument(new JsonObject());
+                return new OghamJsonDocument(new JObject());
             }
         }
 
         public static OghamJsonDocument CreateNew(string storyTag = "")
         {
-            var root = new JsonObject
+            var root = new JObject
             {
                 ["storyTag"] = storyTag,
-                ["entries"]  = new JsonArray(),
+                ["entries"]  = new JArray(),
             };
             return new OghamJsonDocument(root);
         }
 
         // ── Properties ────────────────────────────────────────────────────────
 
-        public string StoryTag => _root["storyTag"]?.GetValue<string>() ?? string.Empty;
+        public string StoryTag => _root["storyTag"]?.Value<string>() ?? string.Empty;
 
         // ── Read → OghamData (authoring format) ───────────────────────────────
 
         public OghamData ToOghamData()
         {
             var data = ScriptableObject.CreateInstance<OghamData>();
-            if (_root["entries"] is not JsonArray entries) return data;
+            if (_root["entries"] is not JArray entries) return data;
 
             foreach (var entryNode in entries)
             {
-                if (entryNode is not JsonObject eo) continue;
+                if (entryNode is not JObject eo) continue;
                 var entry = new DialogueEntry
                 {
-                    TagPath = eo["tag"]?.GetValue<string>() ?? string.Empty,
+                    TagPath = eo["tag"]?.Value<string>() ?? string.Empty,
                 };
                 ParseContentKeys(eo, entry.ContentKeys);
-                ParseOperations(eo["entryOperations"] as JsonArray, entry.EntryOperations);
-                ParseOptions(eo["options"] as JsonArray, entry.Options);
+                ParseOperations(eo["entryOperations"] as JArray, entry.EntryOperations);
+                ParseOptions(eo["options"] as JArray, entry.Options);
                 data.Entries.Add(entry);
             }
             return data;
@@ -114,27 +114,27 @@ namespace Heathen.Ogham.Editor
         public OghamGraphMetadata ToMetadata()
         {
             var meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
-            if (_root["_editor"] is not JsonObject editor) return meta;
+            if (_root["_editor"] is not JObject editor) return meta;
 
-            if (editor["viewTransform"] is JsonArray vt && vt.Count == 3)
+            if (editor["viewTransform"] is JArray vt && vt.Count == 3)
                 meta.ViewTransform = new Vector3(
-                    vt[0]?.GetValue<float>() ?? 0f,
-                    vt[1]?.GetValue<float>() ?? 0f,
-                    vt[2]?.GetValue<float>() ?? 1f);
+                    vt[0]?.Value<float>() ?? 0f,
+                    vt[1]?.Value<float>() ?? 0f,
+                    vt[2]?.Value<float>() ?? 1f);
 
-            if (editor["labels"] is JsonArray labels)
+            if (editor["labels"] is JArray labels)
                 foreach (var lbl in labels)
-                    if (lbl is JsonObject lo)
+                    if (lbl is JObject lo)
                         meta.Labels.Add(new OghamLabelDef
                         {
-                            Id    = lo["id"]?.GetValue<int>()    ?? 0,
-                            Name  = lo["name"]?.GetValue<string>() ?? string.Empty,
-                            Color = ParseColor(lo["color"]?.GetValue<string>(), Color.white),
+                            Id    = lo["id"]?.Value<int>()    ?? 0,
+                            Name  = lo["name"]?.Value<string>() ?? string.Empty,
+                            Color = ParseColor(lo["color"]?.Value<string>(), Color.white),
                         });
 
-            if (editor["nodes"] is JsonArray nodes)
+            if (editor["nodes"] is JArray nodes)
                 foreach (var n in nodes)
-                    if (n is JsonObject no)
+                    if (n is JObject no)
                         meta.Nodes.Add(ParseNodeMeta(no));
 
             return meta;
@@ -174,129 +174,126 @@ namespace Heathen.Ogham.Editor
 
         // ── Serialize ─────────────────────────────────────────────────────────
 
-        public string ToJson()
-        {
-            var opts = new JsonSerializerOptions { WriteIndented = true };
-            return _root.ToJsonString(opts);
-        }
+        public string ToJson() => _root.ToString(Formatting.Indented);
 
         // ── Parse helpers ─────────────────────────────────────────────────────
 
-        private static void ParseContentKeys(JsonObject eo, List<OghamContentKey> keys)
+        private static void ParseContentKeys(JObject eo, List<OghamContentKey> keys)
         {
             // New format: contentKeys[]
-            if (eo["contentKeys"] is JsonArray ck)
+            if (eo["contentKeys"] is JArray ck)
             {
                 foreach (var k in ck)
                 {
-                    if (k is not JsonObject ko) continue;
-                    Enum.TryParse<OghamContentType>(ko["type"]?.GetValue<string>() ?? "Text", true, out var type);
-                    Enum.TryParse<LexiconLocMode>(  ko["mode"]?.GetValue<string>() ?? "Literal", true, out var mode);
+                    if (k is not JObject ko) continue;
+                    Enum.TryParse<OghamContentType>(ko["type"]?.Value<string>() ?? "Text", true, out var type);
+                    Enum.TryParse<LexiconLocMode>(  ko["mode"]?.Value<string>() ?? "Literal", true, out var mode);
                     keys.Add(new OghamContentKey
                     {
                         Type       = type,
                         Mode       = mode,
-                        KeyOrValue = ko["key"]?.GetValue<string>() ?? string.Empty,
+                        KeyOrValue = ko["key"]?.Value<string>() ?? string.Empty,
                     });
                 }
                 return;
             }
 
             // Legacy O3DE format: dataKeys[] or textKeys[] → Text + Localised
-            var legacyArr = eo["dataKeys"] as JsonArray ?? eo["textKeys"] as JsonArray;
+            var legacyArr = eo["dataKeys"] as JArray ?? eo["textKeys"] as JArray;
             if (legacyArr != null)
                 foreach (var k in legacyArr)
-                    if (k?.GetValue<string>() is { } s)
+                    if (k?.Value<string>() is { } s)
                         keys.Add(new OghamContentKey { Type = OghamContentType.Text, Mode = LexiconLocMode.Localised, KeyOrValue = s });
         }
 
-        private static void ParseOperations(JsonArray arr, List<GameplayTagOperation> ops)
+        private static void ParseOperations(JArray arr, List<GameplayTagOperation> ops)
         {
             if (arr == null) return;
             foreach (var o in arr)
             {
-                if (o is not JsonObject oo) continue;
-                Enum.TryParse<GameplayTagArithmetic>(oo["arithmetic"]?.GetValue<string>() ?? "Set", true, out var arith);
+                if (o is not JObject oo) continue;
+                Enum.TryParse<GameplayTagArithmetic>(oo["arithmetic"]?.Value<string>() ?? "Set", true, out var arith);
                 // Accept O3DE short forms: Sub→Subtract, Mul→Multiply, Div→Divide
-                if (arith == GameplayTagArithmetic.Set && oo["arithmetic"]?.GetValue<string>() is { } raw)
+                if (arith == GameplayTagArithmetic.Set && oo["arithmetic"]?.Value<string>() is { } raw)
                     arith = raw switch { "Sub" => GameplayTagArithmetic.Subtract, "Mul" => GameplayTagArithmetic.Multiply, "Div" => GameplayTagArithmetic.Divide, _ => arith };
 
                 var op = new GameplayTagOperation
                 {
-                    Tag        = HashTag(oo["tag"]?.GetValue<string>()),
+                    Tag        = HashTag(oo["tag"]?.Value<string>()),
                     Arithmetic = arith,
-                    Value      = oo["value"]?.GetValue<ulong>() ?? 0UL,
+                    Value      = oo["value"]?.Value<ulong>() ?? 0UL,
                 };
-                ParseConditions(oo["conditions"] as JsonArray, op.Conditions);
+                ParseConditions(oo["conditions"] as JArray, op.Conditions);
                 ops.Add(op);
             }
         }
 
-        private static void ParseConditions(JsonArray arr, List<GameplayTagCondition> conds)
+        private static void ParseConditions(JArray arr, List<GameplayTagCondition> conds)
         {
             if (arr == null) return;
             foreach (var c in arr)
             {
-                if (c is not JsonObject co) continue;
-                Enum.TryParse<GameplayTagComparisonOp>(co["comparison"]?.GetValue<string>() ?? "Exists", true, out var comp);
-                Enum.TryParse<GameplayTagLogicOp>(     co["logicOp"]?.GetValue<string>()    ?? "And",    true, out var logic);
+                if (c is not JObject co) continue;
+                Enum.TryParse<GameplayTagComparisonOp>(co["comparison"]?.Value<string>() ?? "Exists", true, out var comp);
+                Enum.TryParse<GameplayTagLogicOp>(     co["logicOp"]?.Value<string>()    ?? "And",    true, out var logic);
                 var cond = new GameplayTagCondition
                 {
-                    Tag          = HashTag(co["tag"]?.GetValue<string>()),
+                    Tag          = HashTag(co["tag"]?.Value<string>()),
                     Comparison   = comp,
-                    CompareValue = co["compareValue"]?.GetValue<ulong>() ?? 0UL,
-                    ExactMatch   = co["exactMatch"]?.GetValue<bool>() ?? true,
+                    CompareValue = co["compareValue"]?.Value<ulong>() ?? 0UL,
+                    ExactMatch   = co["exactMatch"]?.Value<bool>() ?? true,
                     LogicOp      = logic,
                 };
-                var compareTagStr = co["compareTag"]?.GetValue<string>();
+                var compareTagStr = co["compareTag"]?.Value<string>();
                 if (!string.IsNullOrWhiteSpace(compareTagStr))
                     cond.CompareTag = HashTag(compareTagStr);
                 conds.Add(cond);
             }
         }
 
-        private static void ParseOptions(JsonArray arr, List<DialogueOption> opts)
+        private static void ParseOptions(JArray arr, List<DialogueOption> opts)
         {
             if (arr == null) return;
             foreach (var o in arr)
             {
-                if (o is not JsonObject oo) continue;
+                if (o is not JObject oo) continue;
                 var opt = new DialogueOption
                 {
-                    TagPath         = oo["tag"]?.GetValue<string>()        ?? string.Empty,
-                    TargetEntryPath = (oo["targetTag"] ?? oo["targetEntry"])?.GetValue<string>() ?? string.Empty,
+                    TagPath         = oo["tag"]?.Value<string>()        ?? string.Empty,
+                    TargetEntryPath = (oo["targetTag"] ?? oo["targetEntry"])?.Value<string>() ?? string.Empty,
                 };
 
                 // textKey: string or {"mode":..., "key":...}
-                if (oo["textKey"] is JsonValue tv && tv.TryGetValue<string>(out var tvStr))
+                if (oo["textKey"] is JValue tv)
                 {
-                    Enum.TryParse<LexiconLocMode>(oo["textMode"]?.GetValue<string>() ?? "Literal", true, out var tMode);
+                    var tvStr = tv.Value<string>() ?? string.Empty;
+                    Enum.TryParse<LexiconLocMode>(oo["textMode"]?.Value<string>() ?? "Literal", true, out var tMode);
                     opt.TextKey = new LexiconText { Mode = tMode, KeyOrValue = tvStr };
                 }
-                else if (oo["textKey"] is JsonObject tko)
+                else if (oo["textKey"] is JObject tko)
                 {
-                    Enum.TryParse<LexiconLocMode>(tko["mode"]?.GetValue<string>() ?? "Literal", true, out var tMode);
-                    opt.TextKey = new LexiconText { Mode = tMode, KeyOrValue = tko["key"]?.GetValue<string>() ?? string.Empty };
+                    Enum.TryParse<LexiconLocMode>(tko["mode"]?.Value<string>() ?? "Literal", true, out var tMode);
+                    opt.TextKey = new LexiconText { Mode = tMode, KeyOrValue = tko["key"]?.Value<string>() ?? string.Empty };
                 }
 
-                ParseConditions(oo["conditions"] as JsonArray, opt.Conditions);
-                ParseOperations(oo["operations"] as JsonArray, opt.Operations);
+                ParseConditions(oo["conditions"] as JArray, opt.Conditions);
+                ParseOperations(oo["operations"] as JArray, opt.Operations);
                 opts.Add(opt);
             }
         }
 
         private OghamCompiledLocale[] ParseLocalisations()
         {
-            if (_root["localisations"] is not JsonArray arr) return Array.Empty<OghamCompiledLocale>();
+            if (_root["localisations"] is not JArray arr) return Array.Empty<OghamCompiledLocale>();
             var result = new List<OghamCompiledLocale>(arr.Count);
             foreach (var l in arr)
             {
-                if (l is not JsonObject lo) continue;
+                if (l is not JObject lo) continue;
                 result.Add(new OghamCompiledLocale
                 {
-                    Culture = lo["culture"]?.GetValue<string>() ?? string.Empty,
-                    Key     = lo["key"]?.GetValue<string>()     ?? string.Empty,
-                    Value   = lo["value"]?.GetValue<string>()   ?? string.Empty,
+                    Culture = lo["culture"]?.Value<string>() ?? string.Empty,
+                    Key     = lo["key"]?.Value<string>()     ?? string.Empty,
+                    Value   = lo["value"]?.Value<string>()   ?? string.Empty,
                 });
             }
             return result.ToArray();
@@ -310,48 +307,48 @@ namespace Heathen.Ogham.Editor
             var paths = new HashSet<string>(StringComparer.Ordinal);
             var st = StoryTag;
             if (!string.IsNullOrWhiteSpace(st)) paths.Add(st.Trim());
-            if (_root["entries"] is JsonArray entries)
+            if (_root["entries"] is JArray entries)
                 foreach (var e in entries)
-                    if (e is JsonObject eo) CollectEntryTagPaths(eo, paths);
+                    if (e is JObject eo) CollectEntryTagPaths(eo, paths);
             return paths;
         }
 
         public OghamCompiledLocale[] GetLocalisations() => ParseLocalisations();
 
-        private static void CollectEntryTagPaths(JsonObject eo, HashSet<string> paths)
+        private static void CollectEntryTagPaths(JObject eo, HashSet<string> paths)
         {
-            AddTagPath(paths, eo["tag"]?.GetValue<string>());
-            CollectOperationTagPaths(eo["entryOperations"] as JsonArray, paths);
-            if (eo["options"] is JsonArray opts)
+            AddTagPath(paths, eo["tag"]?.Value<string>());
+            CollectOperationTagPaths(eo["entryOperations"] as JArray, paths);
+            if (eo["options"] is JArray opts)
                 foreach (var o in opts)
-                    if (o is JsonObject oo)
+                    if (o is JObject oo)
                     {
-                        AddTagPath(paths, oo["tag"]?.GetValue<string>());
-                        AddTagPath(paths, (oo["targetTag"] ?? oo["targetEntry"])?.GetValue<string>());
-                        CollectOperationTagPaths(oo["operations"] as JsonArray, paths);
-                        CollectConditionTagPaths(oo["conditions"] as JsonArray, paths);
+                        AddTagPath(paths, oo["tag"]?.Value<string>());
+                        AddTagPath(paths, (oo["targetTag"] ?? oo["targetEntry"])?.Value<string>());
+                        CollectOperationTagPaths(oo["operations"] as JArray, paths);
+                        CollectConditionTagPaths(oo["conditions"] as JArray, paths);
                     }
         }
 
-        private static void CollectOperationTagPaths(JsonArray arr, HashSet<string> paths)
+        private static void CollectOperationTagPaths(JArray arr, HashSet<string> paths)
         {
             if (arr == null) return;
             foreach (var o in arr)
-                if (o is JsonObject oo)
+                if (o is JObject oo)
                 {
-                    AddTagPath(paths, oo["tag"]?.GetValue<string>());
-                    CollectConditionTagPaths(oo["conditions"] as JsonArray, paths);
+                    AddTagPath(paths, oo["tag"]?.Value<string>());
+                    CollectConditionTagPaths(oo["conditions"] as JArray, paths);
                 }
         }
 
-        private static void CollectConditionTagPaths(JsonArray arr, HashSet<string> paths)
+        private static void CollectConditionTagPaths(JArray arr, HashSet<string> paths)
         {
             if (arr == null) return;
             foreach (var c in arr)
-                if (c is JsonObject co)
+                if (c is JObject co)
                 {
-                    AddTagPath(paths, co["tag"]?.GetValue<string>());
-                    AddTagPath(paths, co["compareTag"]?.GetValue<string>());
+                    AddTagPath(paths, co["tag"]?.Value<string>());
+                    AddTagPath(paths, co["compareTag"]?.Value<string>());
                 }
         }
 
@@ -360,58 +357,58 @@ namespace Heathen.Ogham.Editor
             if (!string.IsNullOrWhiteSpace(p)) paths.Add(p.Trim());
         }
 
-        private static OghamNodeMeta ParseNodeMeta(JsonObject no)
+        private static OghamNodeMeta ParseNodeMeta(JObject no)
         {
             var nm = new OghamNodeMeta
             {
-                TagName        = no["tag"]?.GetValue<string>()          ?? string.Empty,
-                LabelText      = no["label"]?.GetValue<string>()        ?? string.Empty,
-                LabelColor     = ParseColor(no["labelColor"]?.GetValue<string>(), Color.white),
-                IsCollapsed    = no["collapsed"]?.GetValue<bool>()      ?? false,
-                OpsExpanded    = no["opsExpanded"]?.GetValue<bool>()    ?? false,
-                FieldsExpanded = no["fieldsExpanded"]?.GetValue<bool>() ?? true,
-                ChoicesExpanded= no["choicesExpanded"]?.GetValue<bool>()  ?? true,
-                HighlightColor = ParseColor(no["highlightColor"]?.GetValue<string>(), Color.clear),
+                TagName        = no["tag"]?.Value<string>()          ?? string.Empty,
+                LabelText      = no["label"]?.Value<string>()        ?? string.Empty,
+                LabelColor     = ParseColor(no["labelColor"]?.Value<string>(), Color.white),
+                IsCollapsed    = no["collapsed"]?.Value<bool>()      ?? false,
+                OpsExpanded    = no["opsExpanded"]?.Value<bool>()    ?? false,
+                FieldsExpanded = no["fieldsExpanded"]?.Value<bool>() ?? true,
+                ChoicesExpanded= no["choicesExpanded"]?.Value<bool>()  ?? true,
+                HighlightColor = ParseColor(no["highlightColor"]?.Value<string>(), Color.clear),
             };
 
-            if (no["position"] is JsonArray pos && pos.Count == 4)
-                nm.Position = new Rect(pos[0]?.GetValue<float>() ?? 0f, pos[1]?.GetValue<float>() ?? 0f,
-                                       pos[2]?.GetValue<float>() ?? 300f, pos[3]?.GetValue<float>() ?? 200f);
+            if (no["position"] is JArray pos && pos.Count == 4)
+                nm.Position = new Rect(pos[0]?.Value<float>() ?? 0f, pos[1]?.Value<float>() ?? 0f,
+                                       pos[2]?.Value<float>() ?? 300f, pos[3]?.Value<float>() ?? 200f);
 
-            if (no["tabFlagOptions"] is JsonArray tfo)
+            if (no["tabFlagOptions"] is JArray tfo)
                 foreach (var t in tfo)
-                    if (t?.GetValue<string>() is { } s) nm.TabFlagOptions.Add(s);
+                    if (t?.Value<string>() is { } s) nm.TabFlagOptions.Add(s);
 
-            if (no["assignedLabels"] is JsonArray al)
+            if (no["assignedLabels"] is JArray al)
                 foreach (var id in al)
-                    nm.AssignedLabelIds.Add(id?.GetValue<int>() ?? 0);
+                    nm.AssignedLabelIds.Add(id?.Value<int>() ?? 0);
 
-            if (no["aliasPins"] is JsonArray ap)
+            if (no["aliasPins"] is JArray ap)
                 foreach (var a in ap)
-                    if (a is JsonObject ao)
+                    if (a is JObject ao)
                     {
                         var pin = new OghamAliasMeta
                         {
-                            Name            = ao["name"]?.GetValue<string>()   ?? string.Empty,
-                            TargetEntryTagName = ao["target"]?.GetValue<string>() ?? string.Empty,
+                            Name            = ao["name"]?.Value<string>()   ?? string.Empty,
+                            TargetEntryTagName = ao["target"]?.Value<string>() ?? string.Empty,
                         };
-                        if (ao["position"] is JsonArray pp && pp.Count == 2)
-                            pin.Position = new Vector2(pp[0]?.GetValue<float>() ?? 0f, pp[1]?.GetValue<float>() ?? 0f);
+                        if (ao["position"] is JArray pp && pp.Count == 2)
+                            pin.Position = new Vector2(pp[0]?.Value<float>() ?? 0f, pp[1]?.Value<float>() ?? 0f);
                         nm.AliasPins.Add(pin);
                     }
 
-            if (no["edgeWaypoints"] is JsonArray ew)
+            if (no["edgeWaypoints"] is JArray ew)
                 foreach (var e in ew)
-                    if (e is JsonObject ewo)
+                    if (e is JObject ewo)
                     {
                         var wp = new OghamEdgeWaypoints
                         {
-                            OptionTagPath = ewo["option"]?.GetValue<string>() ?? string.Empty,
+                            OptionTagPath = ewo["option"]?.Value<string>() ?? string.Empty,
                         };
-                        if (ewo["points"] is JsonArray pts)
+                        if (ewo["points"] is JArray pts)
                             foreach (var pt in pts)
-                                if (pt is JsonArray p2 && p2.Count == 2)
-                                    wp.Points.Add(new Vector2(p2[0]?.GetValue<float>() ?? 0f, p2[1]?.GetValue<float>() ?? 0f));
+                                if (pt is JArray p2 && p2.Count == 2)
+                                    wp.Points.Add(new Vector2(p2[0]?.Value<float>() ?? 0f, p2[1]?.Value<float>() ?? 0f));
                         nm.EdgeWaypoints.Add(wp);
                     }
 
@@ -420,20 +417,20 @@ namespace Heathen.Ogham.Editor
 
         // ── Build helpers (for SyncFrom) ──────────────────────────────────────
 
-        private static JsonArray BuildEntriesArray(List<DialogueEntry> entries)
+        private static JArray BuildEntriesArray(List<DialogueEntry> entries)
         {
-            var arr = new JsonArray();
+            var arr = new JArray();
             if (entries == null) return arr;
             foreach (var e in entries)
             {
-                var eo = new JsonObject { ["tag"] = e.TagPath };
+                var eo = new JObject { ["tag"] = e.TagPath };
 
                 if (e.ContentKeys.Count > 0)
                 {
-                    var ck = new JsonArray();
+                    var ck = new JArray();
                     foreach (var k in e.ContentKeys)
                     {
-                        var ko = new JsonObject
+                        var ko = new JObject
                         {
                             ["type"] = k.Type.ToString(),
                             ["mode"] = k.Mode.ToString(),
@@ -455,12 +452,12 @@ namespace Heathen.Ogham.Editor
             return arr;
         }
 
-        private static JsonArray BuildOperationsArray(List<GameplayTagOperation> ops)
+        private static JArray BuildOperationsArray(List<GameplayTagOperation> ops)
         {
-            var arr = new JsonArray();
+            var arr = new JArray();
             foreach (var op in ops)
             {
-                var oo = new JsonObject
+                var oo = new JObject
                 {
                     ["tag"]        = op.Tag.Id != 0 ? GameplayTagRegistry.GetName(op.Tag.Id) : string.Empty,
                     ["arithmetic"] = op.Arithmetic.ToString(),
@@ -473,12 +470,12 @@ namespace Heathen.Ogham.Editor
             return arr;
         }
 
-        private static JsonArray BuildConditionsArray(List<GameplayTagCondition> conds)
+        private static JArray BuildConditionsArray(List<GameplayTagCondition> conds)
         {
-            var arr = new JsonArray();
+            var arr = new JArray();
             foreach (var c in conds)
             {
-                var co = new JsonObject
+                var co = new JObject
                 {
                     ["tag"]          = c.Tag.Id != 0 ? GameplayTagRegistry.GetName(c.Tag.Id) : string.Empty,
                     ["comparison"]   = c.Comparison.ToString(),
@@ -493,12 +490,12 @@ namespace Heathen.Ogham.Editor
             return arr;
         }
 
-        private static JsonArray BuildOptionsArray(List<DialogueOption> opts)
+        private static JArray BuildOptionsArray(List<DialogueOption> opts)
         {
-            var arr = new JsonArray();
+            var arr = new JArray();
             foreach (var opt in opts)
             {
-                var oo = new JsonObject
+                var oo = new JObject
                 {
                     ["tag"]       = opt.TagPath,
                     ["targetTag"] = opt.TargetEntryPath,
@@ -510,7 +507,7 @@ namespace Heathen.Ogham.Editor
                 }
                 else
                 {
-                    oo["textKey"] = new JsonObject
+                    oo["textKey"] = new JObject
                     {
                         ["mode"] = opt.TextKey.Mode.ToString(),
                         ["key"]  = opt.TextKey.KeyOrValue ?? string.Empty,
@@ -524,11 +521,11 @@ namespace Heathen.Ogham.Editor
             return arr;
         }
 
-        private static JsonObject BuildEditorBlock(OghamGraphMetadata meta)
+        private static JObject BuildEditorBlock(OghamGraphMetadata meta)
         {
-            var editor = new JsonObject
+            var editor = new JObject
             {
-                ["viewTransform"] = new JsonArray
+                ["viewTransform"] = new JArray
                 {
                     meta.ViewTransform.x, meta.ViewTransform.y, meta.ViewTransform.z
                 },
@@ -536,9 +533,9 @@ namespace Heathen.Ogham.Editor
 
             if (meta.Labels.Count > 0)
             {
-                var labels = new JsonArray();
+                var labels = new JArray();
                 foreach (var l in meta.Labels)
-                    labels.Add(new JsonObject
+                    labels.Add(new JObject
                     {
                         ["id"]    = l.Id,
                         ["name"]  = l.Name,
@@ -547,13 +544,13 @@ namespace Heathen.Ogham.Editor
                 editor["labels"] = labels;
             }
 
-            var nodes = new JsonArray();
+            var nodes = new JArray();
             foreach (var n in meta.Nodes)
             {
-                var no = new JsonObject
+                var no = new JObject
                 {
                     ["tag"]            = n.TagName,
-                    ["position"]       = new JsonArray { n.Position.x, n.Position.y, n.Position.width, n.Position.height },
+                    ["position"]       = new JArray { n.Position.x, n.Position.y, n.Position.width, n.Position.height },
                     ["label"]          = n.LabelText,
                     ["labelColor"]     = ToHex(n.LabelColor),
                     ["collapsed"]      = n.IsCollapsed,
@@ -565,39 +562,39 @@ namespace Heathen.Ogham.Editor
 
                 if (n.TabFlagOptions.Count > 0)
                 {
-                    var tfo = new JsonArray();
+                    var tfo = new JArray();
                     foreach (var t in n.TabFlagOptions) tfo.Add(t);
                     no["tabFlagOptions"] = tfo;
                 }
 
                 if (n.AssignedLabelIds.Count > 0)
                 {
-                    var al = new JsonArray();
+                    var al = new JArray();
                     foreach (var id in n.AssignedLabelIds) al.Add(id);
                     no["assignedLabels"] = al;
                 }
 
                 if (n.AliasPins.Count > 0)
                 {
-                    var ap = new JsonArray();
+                    var ap = new JArray();
                     foreach (var pin in n.AliasPins)
-                        ap.Add(new JsonObject
+                        ap.Add(new JObject
                         {
                             ["name"]     = pin.Name,
                             ["target"]   = pin.TargetEntryTagName,
-                            ["position"] = new JsonArray { pin.Position.x, pin.Position.y },
+                            ["position"] = new JArray { pin.Position.x, pin.Position.y },
                         });
                     no["aliasPins"] = ap;
                 }
 
                 if (n.EdgeWaypoints.Count > 0)
                 {
-                    var ew = new JsonArray();
+                    var ew = new JArray();
                     foreach (var wp in n.EdgeWaypoints)
                     {
-                        var pts = new JsonArray();
-                        foreach (var pt in wp.Points) pts.Add(new JsonArray { pt.x, pt.y });
-                        ew.Add(new JsonObject { ["option"] = wp.OptionTagPath, ["points"] = pts });
+                        var pts = new JArray();
+                        foreach (var pt in wp.Points) pts.Add(new JArray { pt.x, pt.y });
+                        ew.Add(new JObject { ["option"] = wp.OptionTagPath, ["points"] = pts });
                     }
                     no["edgeWaypoints"] = ew;
                 }
