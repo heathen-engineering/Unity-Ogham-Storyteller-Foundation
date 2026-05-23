@@ -16,8 +16,12 @@ namespace Heathen.Ogham
     // At edit time, StripMarkup() produces a clean plain-text preview.
     public static class OghamInlineLinkParser
     {
+        // Protocol prefix used to identify links that map to a StoryOption tag.
+        // [display](Ogham://My.Option.Tag) → resolves via node.AllOptions, styled per IsActive.
+        public const string OghamScheme = "Ogham://";
+
         // [display](tag)  —  group 1 = display, group 2 = tag (may be null/empty)
-        private static readonly Regex LinkRx = new Regex(
+        internal static readonly Regex LinkRx = new Regex(
             @"\[([^\]]*)\](?:\(([^)]*)\))?",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
@@ -27,12 +31,21 @@ namespace Heathen.Ogham
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // Bold before italic to avoid double-asterisk collisions
-        private static readonly Regex BoldRx    = new Regex(@"\*\*([^*]+)\*\*",
+        internal static readonly Regex BoldRx   = new Regex(@"\*\*([^*]+)\*\*",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
-        private static readonly Regex ItalicRx  = new Regex(@"\*([^*]+)\*",
+        internal static readonly Regex ItalicRx = new Regex(@"\*([^*]+)\*",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
         private static readonly Regex RichTagRx = new Regex(@"<[^>]+>",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        // True when a TMPro link ID (the value of <link="..."/>) uses the Ogham option protocol.
+        public static bool IsOghamLink(string linkId) =>
+            linkId != null && linkId.StartsWith(OghamScheme, StringComparison.Ordinal);
+
+        // Strips the Ogham:// prefix to yield the raw GameplayTag dot-path.
+        // Call after IsOghamLink returns true.
+        public static string GetTagPath(string oghamLinkId) =>
+            oghamLinkId is null ? string.Empty : oghamLinkId.Substring(OghamScheme.Length);
 
         // Returns true if the entire trimmed text is one [display](tag) span.
         // Outputs the display text and the tag path (tag may be empty string).

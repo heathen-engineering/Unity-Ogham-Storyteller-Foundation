@@ -107,10 +107,12 @@ namespace Heathen.Ogham
 
         // ── Query — main story ────────────────────────────────────────────────
 
-        public static bool                        IsActive  => _mainStory?.IsActive  ?? false;
-        public static StoryNode                   Data      => _mainStory?.CurrentNode;
-        public static IReadOnlyList<StoryOption>  Options   => _mainStory?.CurrentOptions ?? _emptyOptions;
-        public static IReadOnlyList<HistoryEntry> History   => _mainStory?.History        ?? _emptyHistory;
+        public static bool                        IsActive   => _mainStory?.IsActive          ?? false;
+        public static StoryNode                   Data       => _mainStory?.CurrentNode;
+        public static IReadOnlyList<StoryOption>  Options    => _mainStory?.CurrentOptions    ?? _emptyOptions;
+        // All options including gated ones. Use with OghamLinkFormatter to style inline links.
+        public static IReadOnlyList<StoryOption>  AllOptions => _mainStory?.CurrentAllOptions ?? _emptyOptions;
+        public static IReadOnlyList<HistoryEntry> History    => _mainStory?.History           ?? _emptyHistory;
 
         // ── State interface — main story ──────────────────────────────────────
 

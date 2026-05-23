@@ -19,10 +19,16 @@ namespace Heathen.Ogham
         public GameplayTag TargetTag => _option.TargetEntry;
         public bool        HasTarget => _option.TargetEntry.Id != 0;
 
+        // True when this option's conditions are satisfied at the moment this node was entered.
+        // False means the option exists but is currently gated (visible but not actionable).
+        // Use this to style inline links differently depending on whether the player can take them.
+        public bool IsActive { get; internal set; } = true;
+
         public string GetText() => _option.TextKey.Resolve();
 
         // Advance the conversation by selecting this option.
         // Safe to wire directly to a UI button — no Storyteller reference required.
+        // Returns false silently when IsActive is false.
         public void Choose() => _story.Choose(_option.Tag);
 
         // Internal access for OghamStory to read operations and navigation target.

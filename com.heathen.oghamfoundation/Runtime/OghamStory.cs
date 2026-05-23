@@ -24,15 +24,19 @@ namespace Heathen.Ogham
         private readonly GameplayTagCollection _state   = new();
         private readonly List<HistoryEntry>    _history = new();
 
-        private StoryNode                 _currentNode;
-        private IReadOnlyList<StoryOption> _currentOptions = Array.Empty<StoryOption>();
+        private StoryNode                  _currentNode;
+        private IReadOnlyList<StoryOption> _currentOptions    = Array.Empty<StoryOption>();
+        private IReadOnlyList<StoryOption> _currentAllOptions = Array.Empty<StoryOption>();
 
-        public GameplayTag                     Id             { get; }
-        public bool                            IsActive       => _isActive;
-        public StoryNode                       CurrentNode    => _currentNode;
-        public IReadOnlyList<StoryOption>      CurrentOptions => _currentOptions;
-        public GameplayTagCollection           NarrativeState => _state;
-        public IReadOnlyList<HistoryEntry>     History        => _history;
+        public GameplayTag                     Id                { get; }
+        public bool                            IsActive          => _isActive;
+        public StoryNode                       CurrentNode       => _currentNode;
+        public IReadOnlyList<StoryOption>      CurrentOptions    => _currentOptions;
+        // All options for the current node, including those whose conditions are not met.
+        // IsActive is false on gated options. Use this to style inline Ogham:// links.
+        public IReadOnlyList<StoryOption>      CurrentAllOptions => _currentAllOptions;
+        public GameplayTagCollection           NarrativeState    => _state;
+        public IReadOnlyList<HistoryEntry>     History           => _history;
 
         // StoryId is the first parameter on every event so listeners can distinguish origin.
         public event Action<GameplayTag, StoryNode>   OnEntered;
@@ -177,9 +181,10 @@ namespace Heathen.Ogham
                 _state.Apply(new GameplayTag(id), GameplayTagArithmetic.Set, 0);
 
             _currentEntryId = entryTag.Id;
-            var opts = BuildOptions(entry);
-            _currentOptions = opts;
-            _currentNode    = new StoryNode(entry, opts);
+            var (active, all) = BuildOptions(entry);
+            _currentOptions    = active;
+            _currentAllOptions = all;
+            _currentNode       = new StoryNode(entry, active, all);
             OnEntered?.Invoke(Id, _currentNode);
             return true;
         }
@@ -240,8 +245,9 @@ namespace Heathen.Ogham
                 _state.Apply(tag, GameplayTagArithmetic.Set, value);
             _history.Clear();
             _history.AddRange(state.History);
-            _currentNode    = null;
-            _currentOptions = Array.Empty<StoryOption>();
+            _currentNode       = null;
+            _currentOptions    = Array.Empty<StoryOption>();
+            _currentAllOptions = Array.Empty<StoryOption>();
         }
 
         // ── ECS / Burst ───────────────────────────────────────────────────────
@@ -257,10 +263,11 @@ namespace Heathen.Ogham
         private void CloseInternal(bool interrupted)
         {
             if (!_isActive) return;
-            _isActive       = false;
-            _currentEntryId = 0;
-            _currentNode    = null;
-            _currentOptions = Array.Empty<StoryOption>();
+            _isActive          = false;
+            _currentEntryId    = 0;
+            _currentNode       = null;
+            _currentOptions    = Array.Empty<StoryOption>();
+            _currentAllOptions = Array.Empty<StoryOption>();
             OnClosed?.Invoke(Id, interrupted);
         }
 
@@ -327,19 +334,27 @@ namespace Heathen.Ogham
             foreach (var op in entry.EntryOperations)
                 op.Apply(_state);
 
-            var opts     = BuildOptions(entry);
-            _currentOptions = opts;
-            _currentNode    = new StoryNode(entry, opts);
+            var (active, all) = BuildOptions(entry);
+            _currentOptions    = active;
+            _currentAllOptions = all;
+            _currentNode       = new StoryNode(entry, active, all);
             OnEntered?.Invoke(Id, _currentNode);
         }
 
-        private IReadOnlyList<StoryOption> BuildOptions(DialogueEntry entry)
+        // Returns (active, all): active contains only condition-passing options;
+        // all contains every option with IsActive reflecting whether its conditions passed.
+        private (IReadOnlyList<StoryOption> active, IReadOnlyList<StoryOption> all) BuildOptions(DialogueEntry entry)
         {
-            var result = new List<StoryOption>(entry.Options.Count);
+            var all    = new List<StoryOption>(entry.Options.Count);
+            var active = new List<StoryOption>();
             foreach (var opt in entry.Options)
-                if (GameplayTagCondition.EvaluateAll(opt.Conditions, _state))
-                    result.Add(new StoryOption(opt, this));
-            return result.AsReadOnly();
+            {
+                var passes = GameplayTagCondition.EvaluateAll(opt.Conditions, _state);
+                var so     = new StoryOption(opt, this) { IsActive = passes };
+                all.Add(so);
+                if (passes) active.Add(so);
+            }
+            return (active.AsReadOnly(), all.AsReadOnly());
         }
 
         private StoryOption FindCurrentOption(GameplayTag tag)

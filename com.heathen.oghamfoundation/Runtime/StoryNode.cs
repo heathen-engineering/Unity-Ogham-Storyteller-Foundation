@@ -10,16 +10,24 @@ namespace Heathen.Ogham
     {
         private readonly DialogueEntry _entry;
         private readonly IReadOnlyList<StoryOption> _options;
+        private readonly IReadOnlyList<StoryOption> _allOptions;
 
-        internal StoryNode(DialogueEntry entry, IReadOnlyList<StoryOption> options)
+        internal StoryNode(DialogueEntry entry, IReadOnlyList<StoryOption> options, IReadOnlyList<StoryOption> allOptions)
         {
-            _entry  = entry;
-            _options = options;
+            _entry      = entry;
+            _options    = options;
+            _allOptions = allOptions;
         }
 
         public GameplayTag Tag              => _entry.Tag;
         public int ContentCount             => _entry.ContentKeys.Count;
+
+        // Active options only — condition-passing. Use this to populate button lists.
         public IReadOnlyList<StoryOption> Options => _options;
+
+        // All options including gated ones (IsActive = false).
+        // Use this to resolve inline Ogham:// links so gated links can be styled differently.
+        public IReadOnlyList<StoryOption> AllOptions => _allOptions;
 
         public string     GetText(int index)    => Valid(index) ? _entry.ContentKeys[index].ResolveText()           : string.Empty;
         public Sprite     GetSprite(int index)  => Valid(index) ? _entry.ContentKeys[index].ResolveAsset() as Sprite      : null;
