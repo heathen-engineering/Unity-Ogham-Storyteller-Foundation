@@ -52,6 +52,21 @@ namespace Heathen.Ogham.Editor
             GameplayTagRegistry.RegisterDefaults(target);
         }
 
+        // Returns true when s is a valid dot-path tag name: non-empty, segments of alphanumeric
+        // characters only, no leading/trailing dots, no consecutive dots.
+        public static bool IsValidTagPath(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            if (s[0] == '.' || s[s.Length - 1] == '.') return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (!char.IsLetterOrDigit(c) && c != '.') return false;
+                if (c == '.' && i + 1 < s.Length && s[i + 1] == '.') return false;
+            }
+            return true;
+        }
+
         // Shows a GenericMenu of all known tags; calls onPick(name) when the user selects one.
         public static void ShowTagPicker(System.Action<string> onPick)
         {

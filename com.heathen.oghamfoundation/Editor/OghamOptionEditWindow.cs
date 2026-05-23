@@ -76,6 +76,8 @@ namespace Heathen.Ogham.Editor
             public long                    Value;
             public bool                    ExactMatch;
             public GameplayTagLogicOp      Logic;
+            public bool                    UseCompareTag;
+            public string                  CompareTagName;
         }
 
         private struct OpRow
@@ -102,11 +104,13 @@ namespace Heathen.Ogham.Editor
             foreach (var c in item.Conditions)
                 w._conditions.Add(new CondRow
                 {
-                    TagName    = c.Tag.IsValid ? OghamTagHelper.GetTagName(c.Tag.Id) : "",
-                    Comparison = c.Comparison,
-                    Value      = (long)c.CompareValue,
-                    ExactMatch = c.ExactMatch,
-                    Logic      = c.LogicOp,
+                    TagName        = c.Tag.IsValid ? OghamTagHelper.GetTagName(c.Tag.Id) : "",
+                    Comparison     = c.Comparison,
+                    Value          = (long)c.CompareValue,
+                    ExactMatch     = c.ExactMatch,
+                    Logic          = c.LogicOp,
+                    UseCompareTag  = c.CompareTag.Id != 0,
+                    CompareTagName = c.CompareTag.Id != 0 ? OghamTagHelper.GetTagName(c.CompareTag.Id) : "",
                 });
 
             w._operations.Clear();
@@ -274,13 +278,38 @@ namespace Heathen.Ogham.Editor
 
                 using (new EditorGUILayout.HorizontalScope())
                 {
+                    var captI = i;
                     c.ExactMatch = GUILayout.Toggle(c.ExactMatch, new GUIContent("⊞", "Exact match"),
                         EditorStyles.miniButton, GUILayout.Width(ExW));
                     c.Comparison = (GameplayTagComparisonOp)EditorGUILayout.EnumPopup(c.Comparison,
                         GUILayout.ExpandWidth(true));
-                    c.Value = EditorGUILayout.LongField(c.Value, GUILayout.Width(ValW));
-                    if (c.Value < 0) c.Value = 0;
-                    var captI = i;
+
+                    var newUse = GUILayout.Toggle(c.UseCompareTag,
+                        new GUIContent(c.UseCompareTag ? "T" : "#",
+                            c.UseCompareTag ? "Compare against tag value" : "Compare against constant"),
+                        EditorStyles.miniButton, GUILayout.Width(22f));
+                    if (newUse != c.UseCompareTag) { c.UseCompareTag = newUse; if (!newUse) c.CompareTagName = ""; }
+
+                    if (c.UseCompareTag)
+                    {
+                        var valid  = OghamTagHelper.IsValidTagPath(c.CompareTagName);
+                        var prevBg = GUI.backgroundColor;
+                        if (!valid && !string.IsNullOrEmpty(c.CompareTagName))
+                            GUI.backgroundColor = Color.red;
+                        c.CompareTagName = EditorGUILayout.TextField(c.CompareTagName ?? "", GUILayout.ExpandWidth(true));
+                        GUI.backgroundColor = prevBg;
+                        if (GUILayout.Button("▾", GUILayout.Width(PickW)))
+                            OghamTagHelper.ShowTagPicker(s =>
+                            {
+                                var r = _conditions[captI]; r.CompareTagName = s; _conditions[captI] = r; Repaint();
+                            });
+                    }
+                    else
+                    {
+                        c.Value = EditorGUILayout.LongField(c.Value, GUILayout.Width(ValW));
+                        if (c.Value < 0) c.Value = 0;
+                    }
+
                     if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22f)))
                     {
                         _conditions.RemoveAt(captI);
@@ -415,7 +444,7 @@ namespace Heathen.Ogham.Editor
             foreach (var c in _conditions)
             {
                 OghamTagHelper.EnsureRegistered(c.TagName);
-                _item.Conditions.Add(new GameplayTagCondition
+                var cond = new GameplayTagCondition
                 {
                     Tag          = string.IsNullOrWhiteSpace(c.TagName)
                         ? default : GameplayTag.FromName(c.TagName.Trim()),
@@ -423,7 +452,13 @@ namespace Heathen.Ogham.Editor
                     CompareValue = (ulong)c.Value,
                     ExactMatch   = c.ExactMatch,
                     LogicOp      = c.Logic,
-                });
+                };
+                if (c.UseCompareTag && OghamTagHelper.IsValidTagPath(c.CompareTagName))
+                {
+                    OghamTagHelper.EnsureRegistered(c.CompareTagName);
+                    cond.CompareTag = GameplayTag.FromName(c.CompareTagName.Trim());
+                }
+                _item.Conditions.Add(cond);
             }
 
             _item.Operations.Clear();
