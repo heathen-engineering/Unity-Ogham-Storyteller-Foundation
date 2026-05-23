@@ -225,6 +225,29 @@ namespace Heathen.Ogham.Editor
             RebuildCanvas();
         }
 
+        // Loads a synthetic (not-in-AssetDatabase) OghamData + OghamGraphMetadata pair.
+        // Used by the .ogham ScriptedImporter workflow where the source of truth is a JSON file.
+        // Changes are NOT auto-saved — the owning window must serialize back to JSON explicitly.
+        public void LoadSyntheticAsset(OghamData data, OghamGraphMetadata meta)
+        {
+            if (data == null || _assets.Contains(data)) return;
+            if (meta == null) meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
+            _assets.Add(data);
+            _metas.Add(meta);
+            if (!_assetColors.ContainsKey(data))
+                _assetColors[data] = HeaderColors[_colorIndex++ % HeaderColors.Length];
+            if (ActiveAsset == null)
+            {
+                ActiveAsset = data;
+                if (meta.ViewTransform.z > 0f)
+                {
+                    _pan  = new Vector2(meta.ViewTransform.x, meta.ViewTransform.y);
+                    _zoom = meta.ViewTransform.z;
+                }
+            }
+            RebuildCanvas();
+        }
+
         public void UnloadAsset(OghamData data)
         {
             int i = _assets.IndexOf(data);
@@ -234,6 +257,12 @@ namespace Heathen.Ogham.Editor
             _assetColors.Remove(data);
             if (ActiveAsset == data) ActiveAsset = _assets.Count > 0 ? _assets[0] : null;
             RebuildCanvas();
+        }
+
+        public OghamGraphMetadata GetMeta(OghamData data)
+        {
+            int i = _assets.IndexOf(data);
+            return i >= 0 ? _metas[i] : null;
         }
 
         public void SetActiveAsset(OghamData data)

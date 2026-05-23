@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Heathen.GameplayTags;
+using Heathen.Lexicon;
 
 namespace Heathen.Ogham
 {
@@ -43,6 +44,13 @@ namespace Heathen.Ogham
                 if (setAsMain) _mainStory = existing;
                 return existing;
             }
+
+            // Inject inline localisations before building story nodes so content resolves correctly.
+            if (compiled?.Localisations != null)
+                foreach (var loc in compiled.Localisations)
+                    if (!string.IsNullOrWhiteSpace(loc.Key))
+                        LexiconRegistry.SetString(loc.Key, loc.Value,
+                            string.IsNullOrWhiteSpace(loc.Culture) ? null : loc.Culture);
 
             var story = new OghamStory(storyId);
             if (compiled != null) story.RegisterData(compiled);

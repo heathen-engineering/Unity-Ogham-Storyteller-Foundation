@@ -24,7 +24,11 @@ namespace Heathen.Ogham
 
         private void Awake()
         {
-            var storyId = GameplayTag.FromName(_storyTagPath);
+            // Use the compiled asset's story tag when the Inspector field is left blank.
+            var tagPath = !string.IsNullOrWhiteSpace(_storyTagPath)
+                ? _storyTagPath
+                : _compiledStory?.StoryTagPath ?? string.Empty;
+            var storyId = GameplayTag.FromName(tagPath);
             Storyteller.RegisterStory(storyId, _compiledStory, _additionalData, _setAsMain);
         }
     }
