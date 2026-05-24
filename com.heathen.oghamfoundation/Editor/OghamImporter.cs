@@ -20,7 +20,6 @@ namespace Heathen.Ogham.Editor
     {
         public override void OnImportAsset(AssetImportContext ctx)
         {
-            Debug.Log($"[OghamImporter] OnImportAsset running: {ctx.assetPath}");
             string json;
             try
             {

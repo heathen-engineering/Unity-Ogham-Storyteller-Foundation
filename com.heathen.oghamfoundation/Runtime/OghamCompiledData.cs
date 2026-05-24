@@ -83,18 +83,18 @@ namespace Heathen.Ogham
             _childIndex = new Dictionary<ulong, HashSet<ulong>>();
             foreach (var entry in Entries)
             {
-                var id = entry.Tag.Id;
+                var id = entry.ResolvedTag.Id;
                 if (id == 0) continue;
                 _index.TryAdd(id, entry);
             }
 
             foreach (var entry in Entries)
             {
-                var parentId = entry.Tag.Id;
+                var parentId = entry.ResolvedTag.Id;
                 if (parentId == 0) continue;
                 foreach (var opt in entry.Options)
                 {
-                    var childId = opt.TargetEntry.Id;
+                    var childId = opt.ResolvedTargetEntry.Id;
                     if (childId == 0) continue;
                     if (!_childIndex.TryGetValue(parentId, out var set))
                     {
@@ -164,12 +164,15 @@ namespace Heathen.Ogham
             Debug.Log($"[Ogham] Compiled {Entries.Count} entries from {sources.Count} source file(s) into '{name}'.");
         }
 
-        // Deep-copies an entry, converting Text ContentKeys to TMPro markup.
-        // Pure-link ContentKeys (entire key = one [display](tag)) are dropped —
-        // they exist only as options, not as displayed text.
+        // Deep-copies an entry into a compiled form:
+        //   - Tag and option tags stored as GameplayTag (ulong hash), no string paths.
+        //   - Text ContentKeys converted to TMPro markup; pure-link keys dropped.
+        //   - Options deep-copied so compiled and authoring data don't share instances.
         public static DialogueEntry CompileEntry(DialogueEntry src)
         {
-            var dst = new DialogueEntry { TagPath = src.TagPath };
+            var dst = new DialogueEntry();
+            // Write hash directly — compiled asset carries no string tag paths.
+            dst.Tag = GameplayTag.FromName(src.TagPath);
 
             foreach (var key in src.ContentKeys)
             {
@@ -177,7 +180,7 @@ namespace Heathen.Ogham
                 {
                     var raw = key.KeyOrValue ?? "";
                     if (OghamInlineLinkParser.IsPureLink(raw, out _, out _))
-                        continue; // pure link: no text, just an option
+                        continue;
 
                     dst.ContentKeys.Add(new OghamContentKey {
                         Type       = key.Type,
@@ -198,7 +201,21 @@ namespace Heathen.Ogham
             }
 
             dst.EntryOperations.AddRange(src.EntryOperations);
-            dst.Options.AddRange(src.Options);
+
+            foreach (var srcOpt in src.Options)
+            {
+                var dstOpt = new DialogueOption();
+                // Write hashes directly — no string paths in compiled options.
+                dstOpt.Tag         = GameplayTag.FromName(srcOpt.TagPath);
+                dstOpt.TargetEntry = string.IsNullOrEmpty(srcOpt.TargetEntryPath)
+                    ? default : GameplayTag.FromName(srcOpt.TargetEntryPath);
+                dstOpt.TextKey                 = srcOpt.TextKey;
+                dstOpt.SynthesizedFromInlineLink = srcOpt.SynthesizedFromInlineLink;
+                dstOpt.Conditions.AddRange(srcOpt.Conditions);
+                dstOpt.Operations.AddRange(srcOpt.Operations);
+                dst.Options.Add(dstOpt);
+            }
+
             return dst;
         }
 #endif

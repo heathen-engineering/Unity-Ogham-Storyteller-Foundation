@@ -17,15 +17,45 @@ namespace Heathen.Ogham
     [Serializable]
     public class DialogueOption
     {
-        [SerializeField] private string _tagPath          = "";
-        [SerializeField] private string _targetEntryPath  = "";
+        // Authoring-only string paths. Set by the graph editor; cleared in compiled assets.
+        [SerializeField] private string _tagPath         = "";
+        [SerializeField] private string _targetEntryPath = "";
 
-        public string TagPath         { get => _tagPath;         set => _tagPath         = value ?? ""; }
-        public string TargetEntryPath { get => _targetEntryPath; set => _targetEntryPath = value ?? ""; }
+        // Stored hash values. Compiler writes these directly.
+        // Authoring setters keep them in sync with the string fields.
+        public GameplayTag Tag;
+        public GameplayTag TargetEntry;
 
-        public GameplayTag Tag         => string.IsNullOrEmpty(_tagPath)         ? default : GameplayTag.FromName(_tagPath);
-        // Empty = close conversation when this option is selected.
-        public GameplayTag TargetEntry => string.IsNullOrEmpty(_targetEntryPath) ? default : GameplayTag.FromName(_targetEntryPath);
+        public string TagPath
+        {
+            get => _tagPath;
+            set
+            {
+                _tagPath = value ?? "";
+                Tag = string.IsNullOrEmpty(_tagPath) ? default : GameplayTag.FromName(_tagPath);
+            }
+        }
+
+        public string TargetEntryPath
+        {
+            get => _targetEntryPath;
+            set
+            {
+                _targetEntryPath = value ?? "";
+                TargetEntry = string.IsNullOrEmpty(_targetEntryPath) ? default : GameplayTag.FromName(_targetEntryPath);
+            }
+        }
+
+        // Runtime resolution: prefer stored hash, fall back to hashing the string path.
+        // The fallback keeps old authoring assets working until they are re-saved.
+        internal GameplayTag ResolvedTag =>
+            Tag.IsValid ? Tag : GameplayTag.FromName(_tagPath);
+
+        internal GameplayTag ResolvedTargetEntry =>
+            TargetEntry.IsValid ? TargetEntry :
+            string.IsNullOrEmpty(_targetEntryPath) ? default : GameplayTag.FromName(_targetEntryPath);
+
+        public bool HasTarget => ResolvedTargetEntry.Id != 0;
 
         public LexiconText TextKey = new();
         public List<GameplayTagCondition> Conditions = new();
@@ -33,19 +63,33 @@ namespace Heathen.Ogham
 
         // Set when this option was synthesized from a [text](tag) inline link in a ContentKey.
         public bool   SynthesizedFromInlineLink  = false;
-        // Identifies the specific inline link span that owns this option (format: "EntryTag.Keys[i].Links[j]").
-        // Empty when the option was hand-authored or when the originating inline link was removed.
+        // Identifies the specific inline link span that owns this option.
         public string InlineLinkSourceKeyPath    = string.Empty;
     }
 
     [Serializable]
     public class DialogueEntry
     {
+        // Authoring-only string path. Set by the graph editor; cleared in compiled assets.
         [SerializeField] private string _tagPath = "";
 
-        public string TagPath { get => _tagPath; set => _tagPath = value ?? ""; }
+        // Stored hash value. Compiler writes this directly.
+        // Authoring setter keeps it in sync with the string field.
+        public GameplayTag Tag;
 
-        public GameplayTag Tag => string.IsNullOrEmpty(_tagPath) ? default : GameplayTag.FromName(_tagPath);
+        public string TagPath
+        {
+            get => _tagPath;
+            set
+            {
+                _tagPath = value ?? "";
+                Tag = string.IsNullOrEmpty(_tagPath) ? default : GameplayTag.FromName(_tagPath);
+            }
+        }
+
+        // Runtime resolution: prefer stored hash, fall back to hashing the string path.
+        internal GameplayTag ResolvedTag =>
+            Tag.IsValid ? Tag : GameplayTag.FromName(_tagPath);
 
         // Multi-role content: narrator, speaker, body, title, images, audio, prefabs, etc.
         public List<OghamContentKey> ContentKeys = new();
@@ -59,7 +103,6 @@ namespace Heathen.Ogham
         public string Uuid;
         public string Name;
         // Identity of the OghamStory this snapshot belongs to.
-        // Used by Storyteller.Restore to route the save to the correct story.
         public ulong StoryId;
         public ulong CurrentEntryId;
         public GameplayTagCollection State = new();

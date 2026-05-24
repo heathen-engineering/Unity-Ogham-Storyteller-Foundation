@@ -15,9 +15,9 @@ namespace Heathen.Ogham
             _story  = story;
         }
 
-        public GameplayTag Tag       => _option.Tag;
-        public GameplayTag TargetTag => _option.TargetEntry;
-        public bool        HasTarget => _option.TargetEntry.Id != 0;
+        public GameplayTag Tag       => _option.ResolvedTag;
+        public GameplayTag TargetTag => _option.ResolvedTargetEntry;
+        public bool        HasTarget => _option.ResolvedTargetEntry.Id != 0;
 
         // True when this option's conditions are satisfied at the moment this node was entered.
         // False means the option exists but is currently gated (visible but not actionable).
@@ -29,7 +29,7 @@ namespace Heathen.Ogham
         // Advance the conversation by selecting this option.
         // Safe to wire directly to a UI button — no Storyteller reference required.
         // Returns false silently when IsActive is false.
-        public void Choose() => _story.Choose(_option.Tag);
+        public void Choose() => _story.Choose(_option.ResolvedTag);
 
         // Internal access for OghamStory to read operations and navigation target.
         internal DialogueOption RawOption => _option;

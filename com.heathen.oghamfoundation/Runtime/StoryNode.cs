@@ -19,7 +19,7 @@ namespace Heathen.Ogham
             _allOptions = allOptions;
         }
 
-        public GameplayTag Tag              => _entry.Tag;
+        public GameplayTag Tag              => _entry.ResolvedTag;
         public int ContentCount             => _entry.ContentKeys.Count;
 
         // Active options only — condition-passing. Use this to populate button lists.

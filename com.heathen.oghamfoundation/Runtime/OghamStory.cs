@@ -88,7 +88,7 @@ namespace Heathen.Ogham
         // Register a single entry created at runtime (e.g. from a mod or UGC manifest).
         public void RegisterEntry(DialogueEntry entry)
         {
-            if (entry == null || entry.Tag.Id == 0) return;
+            if (entry == null || entry.ResolvedTag.Id == 0) return;
             if (!_runtimeEntries.Contains(entry))
             {
                 _runtimeEntries.Add(entry);
@@ -102,7 +102,7 @@ namespace Heathen.Ogham
             bool changed = false;
             foreach (var e in entries)
             {
-                if (e == null || e.Tag.Id == 0) continue;
+                if (e == null || e.ResolvedTag.Id == 0) continue;
                 if (!_runtimeEntries.Contains(e)) { _runtimeEntries.Add(e); changed = true; }
             }
             if (changed) RebuildIndex();
@@ -110,7 +110,7 @@ namespace Heathen.Ogham
 
         public void UnregisterEntry(GameplayTag tag)
         {
-            int idx = _runtimeEntries.FindIndex(e => e.Tag.Id == tag.Id);
+            int idx = _runtimeEntries.FindIndex(e => e.ResolvedTag.Id == tag.Id);
             if (idx >= 0) { _runtimeEntries.RemoveAt(idx); RebuildIndex(); }
         }
 
@@ -147,18 +147,21 @@ namespace Heathen.Ogham
             foreach (var op in chosen.Operations)
                 op.Apply(_state);
 
-            _state.Apply(new GameplayTag(_currentEntryId), GameplayTagArithmetic.Set, chosen.Tag.Id);
-            _history.Add(new HistoryEntry { EntryId = _currentEntryId, SelectedOption = chosen.Tag.Id });
+            var chosenTag    = chosen.ResolvedTag;
+            var chosenTarget = chosen.ResolvedTargetEntry;
 
-            if (chosen.TargetEntry.Id == 0)
+            _state.Apply(new GameplayTag(_currentEntryId), GameplayTagArithmetic.Set, chosenTag.Id);
+            _history.Add(new HistoryEntry { EntryId = _currentEntryId, SelectedOption = chosenTag.Id });
+
+            if (chosenTarget.Id == 0)
             {
                 CloseInternal(interrupted: false);
             }
             else
             {
-                var target = FindEntryInternal(chosen.TargetEntry.Id);
+                var target = FindEntryInternal(chosenTarget.Id);
                 if (target == null) { CloseInternal(interrupted: false); return false; }
-                _currentEntryId = chosen.TargetEntry.Id;
+                _currentEntryId = chosenTarget.Id;
                 EnterEntry(target);
             }
 
@@ -290,18 +293,18 @@ namespace Heathen.Ogham
             if (entries == null) return;
             foreach (var entry in entries)
             {
-                var id = entry.Tag.Id;
+                var id = entry.ResolvedTag.Id;
                 if (id == 0) continue;
                 _entryIndex.TryAdd(id, (assetIdx, entry));
             }
 
             foreach (var entry in entries)
             {
-                var parentId = entry.Tag.Id;
+                var parentId = entry.ResolvedTag.Id;
                 if (parentId == 0) continue;
                 foreach (var opt in entry.Options)
                 {
-                    var childId = opt.TargetEntry.Id;
+                    var childId = opt.ResolvedTargetEntry.Id;
                     if (childId == 0) continue;
                     if (!_childIndex.TryGetValue(parentId, out var set))
                     {
