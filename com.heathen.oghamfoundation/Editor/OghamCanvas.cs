@@ -773,8 +773,8 @@ namespace Heathen.Ogham.Editor
         {
             if (key.Type != OghamContentType.Text)
                 return key.Type == OghamContentType.Image ? ImageRowH : RowH;
-            // Use stripped text for char counting — tags are invisible when richText is on.
-            var text = StripMarkup(key.ResolveText() ?? "");
+            // Use stripped text for char counting — MD markers and tags are invisible when richText is on.
+            var text = OghamInlineLinkParser.StripMarkup(key.ResolveText() ?? "");
             if (string.IsNullOrEmpty(text)) return RowH;
             const int charsPerLine = 52;
             int lines = 1, ll = 0;
@@ -1974,7 +1974,7 @@ namespace Heathen.Ogham.Editor
                 _                       => "",
             };
             var s = key.Type == OghamContentType.Text
-                ? PrepareNodeText(key.ResolveText())
+                ? PrepareNodeText(OghamInlineLinkParser.ToTMProMarkup(key.ResolveText()))
                 : key.KeyOrValue;
             if (string.IsNullOrEmpty(s)) s = "(empty)";
             // Non-text keys: truncate for single-line display. Text keys: show in full (word wrap handles display).

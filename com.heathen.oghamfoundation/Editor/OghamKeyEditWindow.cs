@@ -91,6 +91,7 @@ namespace Heathen.Ogham.Editor
         private ObjectField   _assetField;
         private TextField     _assetKeyField;
         private VisualElement _assetKeyRow;
+        private Button        _sourceBtn;
 
         private const string ColorPrefKey = "Ogham.LastTextColor";
         private const float  W            = 660f;
@@ -375,24 +376,24 @@ namespace Heathen.Ogham.Editor
             }));
             toolbar.Add(new VisualElement { style = { width = Gap } });
 
-            // "Formatted" toggle — switches between MD source (editable) and TMPro preview (read-only).
+            // Source/Formatted toggle — switches between MD source (editable) and TMPro preview (read-only).
+            // Default is Formatted (TMPro preview), so the button starts as "Source" (what clicking will switch TO).
             // The backing _editValue is always the MD string; Formatted view is smoke-and-mirrors.
-            var sourceBtn = new Button { text = "Formatted", tooltip = "Preview how this text will appear in TMPro" };
-            sourceBtn.style.width  = 74f;
-            sourceBtn.style.height = RowH;
-            sourceBtn.focusable    = false;
-            sourceBtn.RegisterCallback<MouseDownEvent>(_ => CacheSelection(), TrickleDown.TrickleDown);
-            sourceBtn.clicked += () => {
+            _sourceBtn = new Button { text = "Source", tooltip = "Show the raw Markdown source instead of the TMPro preview" };
+            _sourceBtn.style.width  = 74f;
+            _sourceBtn.style.height = RowH;
+            _sourceBtn.focusable    = false;
+            _sourceBtn.RegisterCallback<MouseDownEvent>(_ => CacheSelection(), TrickleDown.TrickleDown);
+            _sourceBtn.clicked += () => {
                 if (!_richTextActive)
                 {
                     // Switch to Formatted (TMPro preview, read-only)
-                    var tmproPreview = OghamInlineLinkParser.ToTMProMarkup(_editValue);
                     _suppressUndo = true;
-                    _editorField.SetValueWithoutNotify(tmproPreview);
+                    _editorField.SetValueWithoutNotify(OghamInlineLinkParser.ToTMProMarkup(_editValue));
                     _suppressUndo = false;
                     _editorField.isReadOnly = true;
                     SetEditorRichText(true);
-                    sourceBtn.text = "Source";
+                    _sourceBtn.text = "Source";
                 }
                 else
                 {
@@ -402,10 +403,10 @@ namespace Heathen.Ogham.Editor
                     _suppressUndo = false;
                     _editorField.isReadOnly = false;
                     SetEditorRichText(false);
-                    sourceBtn.text = "Formatted";
+                    _sourceBtn.text = "Formatted";
                 }
             };
-            toolbar.Add(sourceBtn);
+            toolbar.Add(_sourceBtn);
 
             // ── Editor field ──────────────────────────────────────────────────
             // The TextField is placed inside an explicit ScrollView we control.
@@ -432,7 +433,6 @@ namespace Heathen.Ogham.Editor
             _editorField.selectAllOnMouseUp = false;
 
             _editorField.RegisterCallback<AttachToPanelEvent>(_ => {
-                SetEditorRichText(false);   // default: Source mode — MD source, no rich-text rendering
                 _editorField.schedule.Execute(() => {
                     // Internal ScrollView: Vertical mode constrains width (enables
                     // word-wrap); scrollers hidden because the outer ScrollView handles
@@ -443,6 +443,13 @@ namespace Heathen.Ogham.Editor
                     sv.verticalScrollerVisibility   = ScrollerVisibility.Hidden;
                     sv.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
                 }).StartingIn(50);
+
+                // Default: Formatted mode — show the TMPro preview, read-only.
+                _suppressUndo = true;
+                _editorField.SetValueWithoutNotify(OghamInlineLinkParser.ToTMProMarkup(_editValue));
+                _suppressUndo = false;
+                _editorField.isReadOnly = true;
+                SetEditorRichText(true);
             });
 
             editorScroll.Add(_editorField);
@@ -701,15 +708,39 @@ namespace Heathen.Ogham.Editor
 
         private void ApplyFormatting(string open, string close)
         {
-            if (_editorField == null || _richTextActive) return;  // no-op in Formatted (preview) mode
+            if (_editorField == null) return;
 
-            // Editing always happens in Source mode — cursor indices are raw (no rich-text offset).
+            if (_richTextActive)
+            {
+                // Formatted mode: operate on the MD source using the visual selection.
+                string prev = _editValue;
+                var (rawMin, rawMax) = GetSelectionMdRange(prev);
+
+                // Binary formats (**, *, <u>) toggle: strip/split if selection is already formatted.
+                // Parameterised tags (<color=...>, <size=...>) always apply.
+                bool shouldToggle = open == "**" || open == "*" || open == "<u>"
+                                 || open == "<b>" || open == "<i>";
+                string next = (shouldToggle && rawMin != rawMax)
+                    ? ToggleFormatInRange(prev, rawMin, rawMax, open, close)
+                    : prev[..rawMin] + open + prev[rawMin..rawMax] + close + prev[rawMax..];
+
+                if (next == prev) return;
+
+                _undoStack.Add((prev, _cachedCursorIndex));
+                if (_undoStack.Count > UndoLimit) _undoStack.RemoveAt(0);
+                _redoStack.Clear();
+
+                _editValue = next;
+                RefreshFormattedDisplay();
+                return;
+            }
+
+            // Source mode: wrap selection with markers.
             string cur   = _editValue;
             int start    = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, cur.Length);
             int end      = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, cur.Length);
             string result = cur[..start] + open + cur[start..end] + close + cur[end..];
 
-            // Push current state to undo BEFORE the change.
             _undoStack.Add((cur, _cachedCursorIndex));
             if (_undoStack.Count > UndoLimit) _undoStack.RemoveAt(0);
             _redoStack.Clear();
@@ -782,6 +813,7 @@ namespace Heathen.Ogham.Editor
                 // Exit Formatted preview — restore editable Source mode.
                 _editorField.isReadOnly = false;
                 SetEditorRichText(false);
+                if (_sourceBtn != null) _sourceBtn.text = "Formatted";
             }
 
             _suppressUndo = true;
@@ -829,7 +861,9 @@ namespace Heathen.Ogham.Editor
             {
                 bool isLoc = _editMode == LexiconLocMode.Localised;
                 _suppressUndo = true;
-                _editorField.SetValueWithoutNotify(_editValue);
+                _editorField.SetValueWithoutNotify(_richTextActive
+                    ? OghamInlineLinkParser.ToTMProMarkup(_editValue)
+                    : _editValue);
                 _suppressUndo = false;
                 _lexiconRow.style.display = isLoc ? DisplayStyle.Flex : DisplayStyle.None;
                 if (isLoc) _lexiconKeyField.SetValueWithoutNotify(_editKey);
@@ -1187,30 +1221,27 @@ namespace Heathen.Ogham.Editor
             plainText = s;
         }
 
-        // Strips <color=...> and </color> from the current selection (or whole string if no selection).
+        // Strips / splits <color=...>...</color> tags wrapping the current selection.
+        // Works in both Source mode (raw indices) and Formatted mode (visual → MD raw).
+        // If there is no selection, strips all color tags from the whole string.
         private void StripColorFromSelection()
         {
-            if (_richTextActive) return;   // no-op in Formatted (preview) mode
+            string prev = _editValue;
+            int rawMin, rawMax;
 
-            // Source mode: cursor/selection indices are always raw — no visual-to-raw conversion.
-            string prev      = _editValue;
-            int rawMin       = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
-            int rawMax       = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
-            bool hasSelection = rawMin != rawMax;
-
-            string next;
-            int newPos;
-            if (hasSelection)
-            {
-                string stripped = StripTagsByName(prev[rawMin..rawMax], "color");
-                next   = prev[..rawMin] + stripped + prev[rawMax..];
-                newPos = Mathf.Clamp(rawMin + stripped.Length, 0, next.Length);
-            }
+            if (_richTextActive)
+                (rawMin, rawMax) = GetSelectionMdRange(prev);
             else
             {
-                next   = StripTagsByName(prev, "color");
-                newPos = Mathf.Clamp(rawMin, 0, next.Length);
+                rawMin = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
+                rawMax = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
             }
+
+            // With a selection: find color tags that surround / overlap the range and strip/split.
+            // Without a selection: strip all color tags from the whole string (emergency full-strip).
+            string next = rawMin != rawMax
+                ? StripTagTypeInRange(prev, rawMin, rawMax, "color")
+                : StripTagsByName(prev, "color");
 
             if (next == prev) return;
 
@@ -1220,11 +1251,245 @@ namespace Heathen.Ogham.Editor
 
             _editValue = next;
 
-            _suppressUndo = true;
-            _editorField.SetValueWithoutNotify(next);
-            _suppressUndo = false;
+            if (_richTextActive)
+                RefreshFormattedDisplay();
+            else
+            {
+                _suppressUndo = true;
+                _editorField.SetValueWithoutNotify(next);
+                _suppressUndo = false;
+                RestoreFocusAndCursor(Mathf.Clamp(rawMin, 0, next.Length));
+            }
+        }
 
-            RestoreFocusAndCursor(newPos);
+        // ── Formatted-mode editing helpers ────────────────────────────────────────
+
+        // Maps a visual character index (as reported by textSelection in Formatted/rich-text mode) to
+        // its raw position in the MD source string.  Characters invisible in the MD source:
+        //   • TMPro pass-through tags <...>
+        //   • Bold markers ** (opening and closing pairs)
+        //   • Italic markers *  (opening and closing, skipping those inside bold spans)
+        //   • Link structure [...](...) — brackets and URL invisible; display text inside [] visible.
+        private static int MdVisualToRawIndex(string md, int visualIdx)
+        {
+            if (string.IsNullOrEmpty(md) || visualIdx <= 0) return visualIdx <= 0 ? 0 : md.Length;
+
+            var invisible = new HashSet<int>();
+
+            // TMPro pass-through tags
+            for (int i = 0; i < md.Length; )
+            {
+                if (md[i] == '<') { int end = md.IndexOf('>', i); if (end >= 0) { for (int k = i; k <= end; k++) invisible.Add(k); i = end + 1; continue; } }
+                i++;
+            }
+
+            // Bold markers ** (each opening/closing pair contributes 2 invisible chars)
+            var boldMatches = OghamInlineLinkParser.BoldRx.Matches(md);
+            foreach (System.Text.RegularExpressions.Match m in boldMatches)
+            {
+                invisible.Add(m.Index); invisible.Add(m.Index + 1);
+                int e = m.Index + m.Length - 2; invisible.Add(e); invisible.Add(e + 1);
+            }
+
+            // Italic markers * — skip any that are entirely inside a bold span (false positives)
+            foreach (System.Text.RegularExpressions.Match m in OghamInlineLinkParser.ItalicRx.Matches(md))
+            {
+                bool inBold = false;
+                foreach (System.Text.RegularExpressions.Match b in boldMatches)
+                    if (m.Index >= b.Index && m.Index + m.Length <= b.Index + b.Length) { inBold = true; break; }
+                if (inBold) continue;
+                invisible.Add(m.Index); invisible.Add(m.Index + m.Length - 1);
+            }
+
+            // Link brackets and URL: [display](url) → '[', ']', '(' to ')' are invisible
+            foreach (System.Text.RegularExpressions.Match m in OghamInlineLinkParser.LinkRx.Matches(md))
+            {
+                invisible.Add(m.Index);                                             // '['
+                int cb = m.Index + 1 + m.Groups[1].Length; invisible.Add(cb);      // ']'
+                for (int k = cb + 1; k < m.Index + m.Length; k++) invisible.Add(k); // (url)
+            }
+
+            int v = 0;
+            for (int r = 0; r < md.Length; r++)
+            {
+                if (invisible.Contains(r)) continue;
+                if (v == visualIdx) return r;
+                v++;
+            }
+            return md.Length;
+        }
+
+        // Converts the cached visual selection to MD source raw indices.  Used in Formatted mode.
+        private (int rawMin, int rawMax) GetSelectionMdRange(string md)
+        {
+            int visMin = Mathf.Min(_cachedCursorIndex, _cachedSelectIndex);
+            int visMax = Mathf.Max(_cachedCursorIndex, _cachedSelectIndex);
+            return (Mathf.Clamp(MdVisualToRawIndex(md, visMin), 0, md.Length),
+                    Mathf.Clamp(MdVisualToRawIndex(md, visMax), 0, md.Length));
+        }
+
+        // Recomputes the Formatted (TMPro preview) display from the current _editValue.
+        private void RefreshFormattedDisplay()
+        {
+            if (_editorField == null || !_richTextActive) return;
+            _suppressUndo = true;
+            _editorField.SetValueWithoutNotify(OghamInlineLinkParser.ToTMProMarkup(_editValue));
+            _suppressUndo = false;
+        }
+
+        // True when s contains at least one non-whitespace character that is not inside a <tag>.
+        private static bool HasVisibleChars(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '<') { int end = s.IndexOf('>', i); if (end >= 0) { i = end; continue; } }
+                if (!char.IsWhiteSpace(s[i])) return true;
+            }
+            return false;
+        }
+
+        // Strip or split a single format span [spanStart, spanEnd) around the selection [rawMin, rawMax).
+        // contentStart / contentEnd delimit the span's inner content (excluding markers).
+        // openTag / closeTag are the format markers (e.g. "<color=#FF>" / "</color>" or "**" / "**").
+        private static string StripOrSplitFormatSpan(string md,
+            int spanStart, int spanEnd, int contentStart, int contentEnd,
+            string openTag, string closeTag, int rawMin, int rawMax)
+        {
+            int selMin = Mathf.Max(rawMin, contentStart);
+            int selMax = Mathf.Min(rawMax, contentEnd);
+            if (selMin >= contentEnd) return md; // selection doesn't reach content
+
+            string before = md[..spanStart];
+            string after  = md[spanEnd..];
+            string leftC  = md[contentStart..selMin];
+            string midC   = md[selMin..selMax];
+            string rightC = md[selMax..contentEnd];
+
+            bool lv = HasVisibleChars(leftC);
+            bool rv = HasVisibleChars(rightC);
+
+            if (!lv && !rv) return before + md[contentStart..contentEnd] + after;                             // remove markers
+            if (lv && !rv)  return before + openTag + leftC + closeTag + midC + after;                        // trim end
+            if (!lv)        return before + midC + openTag + rightC + closeTag + after;                       // trim start
+            return          before + openTag + leftC + closeTag + midC + openTag + rightC + closeTag + after; // split
+        }
+
+        // Enumerates all <tagName...>...</tagName> spans in md (non-nested).
+        private static IEnumerable<(int spanStart, int spanEnd, int contentStart, int contentEnd, string openTag)>
+            FindTagSpans(string md, string tagName)
+        {
+            int i = 0;
+            while (i < md.Length)
+            {
+                if (md[i] != '<') { i++; continue; }
+                int gt = md.IndexOf('>', i);
+                if (gt < 0) break;
+                string inner = md.Substring(i + 1, gt - i - 1);
+                if (!inner.StartsWith("/") &&
+                    (inner.Equals(tagName, StringComparison.OrdinalIgnoreCase)
+                    || (inner.Length > tagName.Length
+                        && inner.StartsWith(tagName, StringComparison.OrdinalIgnoreCase)
+                        && (inner[tagName.Length] == '=' || inner[tagName.Length] == ' '))))
+                {
+                    string openTag = md.Substring(i, gt - i + 1);
+                    int contentStart = gt + 1;
+                    string closeTag = $"</{tagName}>";
+                    int closeIdx = md.IndexOf(closeTag, contentStart, StringComparison.OrdinalIgnoreCase);
+                    if (closeIdx >= 0)
+                    {
+                        yield return (i, closeIdx + closeTag.Length, contentStart, closeIdx, openTag);
+                        i = closeIdx + closeTag.Length;
+                        continue;
+                    }
+                }
+                i = gt + 1;
+            }
+        }
+
+        // Strips / splits all spans of the given TMPro tag type that overlap [rawMin, rawMax].
+        // Processes right-to-left so earlier indices are unaffected by later modifications.
+        private static string StripTagTypeInRange(string md, int rawMin, int rawMax, string tagName)
+        {
+            var spans = new List<(int spanStart, int spanEnd, int contentStart, int contentEnd, string openTag)>();
+            foreach (var s in FindTagSpans(md, tagName))
+                if (s.spanStart < rawMax && s.spanEnd > rawMin) spans.Add(s);
+
+            for (int i = spans.Count - 1; i >= 0; i--)
+            {
+                var (spanStart, spanEnd, contentStart, contentEnd, openTag) = spans[i];
+                md = StripOrSplitFormatSpan(md, spanStart, spanEnd, contentStart, contentEnd,
+                    openTag, $"</{tagName}>", rawMin, rawMax);
+            }
+            return md;
+        }
+
+        // Strips / splits MD marker spans (bold ** or italic *) that overlap [rawMin, rawMax].
+        private static string StripMdMarkerInRange(string md, int rawMin, int rawMax,
+            System.Text.RegularExpressions.Regex rx, string marker)
+        {
+            var matches = new List<System.Text.RegularExpressions.Match>();
+            foreach (System.Text.RegularExpressions.Match m in rx.Matches(md))
+                if (m.Index < rawMax && m.Index + m.Length > rawMin) matches.Add(m);
+
+            for (int i = matches.Count - 1; i >= 0; i--)
+            {
+                var m = matches[i];
+                md = StripOrSplitFormatSpan(md, m.Index, m.Index + m.Length,
+                    m.Index + marker.Length, m.Index + m.Length - marker.Length,
+                    marker, marker, rawMin, rawMax);
+            }
+            return md;
+        }
+
+        // Returns true if any format span of the given type overlaps [rawMin, rawMax] in md.
+        private static bool HasFormatOverlap(string md, int rawMin, int rawMax, string open, string close)
+        {
+            if (open == "**")
+            {
+                foreach (System.Text.RegularExpressions.Match m in OghamInlineLinkParser.BoldRx.Matches(md))
+                    if (m.Index < rawMax && m.Index + m.Length > rawMin) return true;
+                return false;
+            }
+            if (open == "*")
+            {
+                var boldMs = OghamInlineLinkParser.BoldRx.Matches(md);
+                foreach (System.Text.RegularExpressions.Match m in OghamInlineLinkParser.ItalicRx.Matches(md))
+                {
+                    if (m.Index >= rawMax || m.Index + m.Length <= rawMin) continue;
+                    bool inBold = false;
+                    foreach (System.Text.RegularExpressions.Match b in boldMs)
+                        if (m.Index >= b.Index && m.Index + m.Length <= b.Index + b.Length) { inBold = true; break; }
+                    if (!inBold) return true;
+                }
+                return false;
+            }
+            if (open.StartsWith("<") && open.EndsWith(">"))
+            {
+                string inner   = open[1..^1];
+                string tagName = inner.Contains('=') ? inner[..inner.IndexOf('=')] : inner;
+                foreach (var (spanStart, spanEnd, _, _, _) in FindTagSpans(md, tagName))
+                    if (spanStart < rawMax && spanEnd > rawMin) return true;
+            }
+            return false;
+        }
+
+        // Toggles format on [rawMin, rawMax]: strips/splits if already formatted, applies if not.
+        private static string ToggleFormatInRange(string md, int rawMin, int rawMax, string open, string close)
+        {
+            if (HasFormatOverlap(md, rawMin, rawMax, open, close))
+            {
+                if (open == "**") return StripMdMarkerInRange(md, rawMin, rawMax, OghamInlineLinkParser.BoldRx,   "**");
+                if (open == "*")  return StripMdMarkerInRange(md, rawMin, rawMax, OghamInlineLinkParser.ItalicRx, "*");
+                if (open.StartsWith("<") && open.EndsWith(">"))
+                {
+                    string inner   = open[1..^1];
+                    string tagName = inner.Contains('=') ? inner[..inner.IndexOf('=')] : inner;
+                    return StripTagTypeInRange(md, rawMin, rawMax, tagName);
+                }
+                return md;
+            }
+            return md[..rawMin] + open + md[rawMin..rawMax] + close + md[rawMax..];
         }
 
         // Strips <tagName=...> / <tagName> and </tagName> pairs from raw, leaving all other markup.
