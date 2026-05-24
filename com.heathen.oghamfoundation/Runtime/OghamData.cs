@@ -100,9 +100,10 @@ namespace Heathen.Ogham
 
                     if (OghamInlineLinkParser.IsPureLink(text, out var pureDisplay, out var pureTag))
                     {
-                        // Pure link: the ContentKey becomes a standalone option; remove the key.
-                        FindOrCreateInlineLinkOption(entry, pureDisplay, pureTag,
-                            string.Empty, ref dirty);
+                        // Only Ogham:// pure links become standalone options; http:// etc. are plain hyperlinks.
+                        if (!OghamInlineLinkParser.IsOghamLink(pureTag)) continue;
+                        FindOrCreateInlineLinkOption(entry, pureDisplay,
+                            OghamInlineLinkParser.GetTagPath(pureTag), string.Empty, ref dirty);
                         entry.ContentKeys.RemoveAt(keyIdx);
                         dirty = true;
                         continue;
@@ -111,9 +112,12 @@ namespace Heathen.Ogham
                     var links = OghamInlineLinkParser.ExtractLinks(text);
                     for (int linkIdx = 0; linkIdx < links.Count; linkIdx++)
                     {
-                        var (display, tag) = links[linkIdx];
+                        var (display, rawUrl) = links[linkIdx];
+                        // Non-Ogham links (http, https, …) are plain hyperlinks — not story options.
+                        if (!OghamInlineLinkParser.IsOghamLink(rawUrl)) continue;
+                        var optionTagPath = OghamInlineLinkParser.GetTagPath(rawUrl);
                         var src = $"{entry.TagPath}.Keys[{keyIdx}].Links[{linkIdx}]";
-                        FindOrCreateInlineLinkOption(entry, display, tag, src, ref dirty);
+                        FindOrCreateInlineLinkOption(entry, display, optionTagPath, src, ref dirty);
                     }
                 }
             }
@@ -122,10 +126,11 @@ namespace Heathen.Ogham
                 UnityEditor.EditorUtility.SetDirty(this);
         }
 
-        private void FindOrCreateInlineLinkOption(DialogueEntry entry, string display, string tag,
+        // optionTagPath is the dot-path of the option this inline link refers to (Ogham:// prefix already stripped).
+        private void FindOrCreateInlineLinkOption(DialogueEntry entry, string display, string optionTagPath,
             string sourcePath, ref bool dirty)
         {
-            // 1. Match by InlineLinkSourceKeyPath
+            // 1. Match by InlineLinkSourceKeyPath (stable across display-text renames)
             if (!string.IsNullOrEmpty(sourcePath))
             {
                 var existing = entry.Options.Find(o => o.InlineLinkSourceKeyPath == sourcePath);
@@ -133,45 +138,51 @@ namespace Heathen.Ogham
                 {
                     if (existing.TextKey.KeyOrValue != display)
                     { existing.TextKey.KeyOrValue = display; dirty = true; }
-                    if (!string.IsNullOrEmpty(tag) && existing.TargetEntryPath != tag)
-                    { existing.TargetEntryPath = tag; dirty = true; }
                     return;
                 }
             }
 
-            // 2. Fallback: match by normalised display text suffix
+            // 2. Match by explicit option tag path — the Ogham:// URL IS the option's tag, not a target entry.
+            //    This prevents duplicating options that are already explicitly declared in the entry.
+            if (!string.IsNullOrEmpty(optionTagPath))
+            {
+                var byTag = entry.Options.Find(o =>
+                    string.Equals(o.TagPath, optionTagPath, System.StringComparison.Ordinal));
+                if (byTag != null)
+                {
+                    if (!string.IsNullOrEmpty(sourcePath) && byTag.InlineLinkSourceKeyPath != sourcePath)
+                    { byTag.InlineLinkSourceKeyPath = sourcePath; dirty = true; }
+                    return;
+                }
+            }
+
+            // 3. Fallback: match by normalised display text suffix (legacy authoring without explicit tag)
             var norm = OghamInlineLinkParser.NormaliseForTag(display);
             var fallback = entry.Options.Find(o =>
                 !string.IsNullOrEmpty(o.TagPath) &&
                 (o.TagPath.EndsWith("." + norm, System.StringComparison.Ordinal)
                  || o.TagPath == norm));
-            if (fallback != null) return;
+            if (fallback != null)
+            {
+                if (!string.IsNullOrEmpty(sourcePath) && fallback.InlineLinkSourceKeyPath != sourcePath)
+                { fallback.InlineLinkSourceKeyPath = sourcePath; dirty = true; }
+                return;
+            }
 
-            // 3. Create a new synthesized option
-            var optTagPath = $"{entry.TagPath}.{norm}";
+            // 4. Create a new synthesized option using the explicit option tag when available.
+            var newTagPath = !string.IsNullOrEmpty(optionTagPath)
+                ? optionTagPath
+                : $"{entry.TagPath}.{norm}";
             var newOpt = new DialogueOption
             {
-                TagPath                   = optTagPath,
-                TargetEntryPath           = tag ?? "",
+                TagPath                   = newTagPath,
+                TargetEntryPath           = string.Empty,
                 SynthesizedFromInlineLink = true,
                 InlineLinkSourceKeyPath   = sourcePath,
             };
             newOpt.TextKey.KeyOrValue = display;
             entry.Options.Add(newOpt);
             dirty = true;
-
-            // 4. Create a stub target entry if the tag isn't in any loaded data
-            if (!string.IsNullOrEmpty(tag))
-            {
-                var targetTag = GameplayTag.FromName(tag);
-                if (targetTag.IsValid && !_index.ContainsKey(targetTag.Id))
-                {
-                    var newEntry = new DialogueEntry { TagPath = tag };
-                    Entries.Add(newEntry);
-                    _index[targetTag.Id] = newEntry;
-                    dirty = true;
-                }
-            }
         }
 #endif
     }

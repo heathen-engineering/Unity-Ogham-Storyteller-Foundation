@@ -13,15 +13,23 @@ namespace Heathen.Ogham.Editor
 {
     // Popup for editing a single OghamContentKey.
     //
-    // The main editing surface is a single multiline TextField with rich-text
-    // rendering enabled on its inner TextElement — i.e. the author always sees
-    // and edits formatted text (WYSIWYG).  "Source" toggles that rendering off
-    // so the raw markup is visible; it is an escape-hatch, not the primary view.
+    // Source format: Markdown-like syntax — the same engine-agnostic dialect used
+    // in the .ogham file.  **bold**  *italic*  [display](Ogham://Tag)
+    // TMPro-only features (underline, colour, size) are embedded as raw TMPro tags
+    // in the source; OghamInlineLinkParser.ToTMProMarkup passes them through unchanged.
+    //
+    // Two display modes for the editing surface:
+    //   Source (default) — shows MD source, fully editable, rich text OFF.
+    //   Formatted        — calls ToTMProMarkup, shows the result with rich text ON,
+    //                       read-only.  Acts as a "smoke and mirrors" TMPro preview.
+    //
+    // Toolbar buttons always edit the MD source; switching to Formatted only affects
+    // the display — the backing _editValue is always the MD string.
     //
     // Layout:
     //   [Type ▼] [Literal|Localised ▼]                   [Save] [X]
-    //   [B] [I] [U] [■ color] [A] [size ▼] [🔗] [Source]
-    //   [ formatted TextField — 160 px, scrolls                      ]
+    //   [B] [I] [U] [■ color] [A] [size ▼] [🔗] [Formatted]
+    //   [ source/preview TextField — 320 px, scrolls                  ]
     //   (lexicon key row — Localised mode only)
     //   (link panel — when open)
     //   -- OR (non-text type) --
@@ -68,7 +76,7 @@ namespace Heathen.Ogham.Editor
         private readonly List<(string text, int cursor)> _redoStack = new();
         private bool _suppressUndo;   // set true during programmatic value changes
         private bool _windowReady;    // true after CreateGUI completes; guards Resize()
-        private bool _richTextActive = true;  // mirrors enableRichText on the inner TextElement
+        private bool _richTextActive = false; // false = Source mode (MD, editable); true = Formatted preview (TMPro, read-only)
         private int  _lastCursorPos  = -1;    // used to detect intentional cursor moves vs focus-loss clears
 
         // UI element references
@@ -240,8 +248,8 @@ namespace Heathen.Ogham.Editor
                 return btn;
             }
 
-            toolbar.Add(MakeBtn("B", "Bold (Ctrl+B)",      () => ApplyFormatting("<b>",  "</b>")));
-            toolbar.Add(MakeBtn("I", "Italic (Ctrl+I)",    () => ApplyFormatting("<i>",  "</i>")));
+            toolbar.Add(MakeBtn("B", "Bold (Ctrl+B)",      () => ApplyFormatting("**",   "**")));
+            toolbar.Add(MakeBtn("I", "Italic (Ctrl+I)",    () => ApplyFormatting("*",    "*")));
             toolbar.Add(MakeBtn("U", "Underline (Ctrl+U)", () => ApplyFormatting("<u>",  "</u>")));
             toolbar.Add(new VisualElement { style = { width = Gap } });
 
@@ -286,15 +294,17 @@ namespace Heathen.Ogham.Editor
             toolbar.Add(new VisualElement { style = { width = Gap } });
 
             toolbar.Add(MakeBtn("🔗", "Insert / edit link", () => {
+                // Link editing only works in Source mode — the field holds the MD source there.
+                if (_richTextActive) return;
+
                 _linkPanelOpen = !_linkPanelOpen;
                 _linkPanel.style.display = _linkPanelOpen ? DisplayStyle.Flex : DisplayStyle.None;
                 if (_linkPanelOpen)
                 {
-                    string raw    = _editorField.value;
-                    int visMin    = Mathf.Min(_cachedCursorIndex, _cachedSelectIndex);
-                    int visMax    = Mathf.Max(_cachedCursorIndex, _cachedSelectIndex);
-                    int rawSelMin = Mathf.Clamp(_richTextActive ? VisualToRawIndex(raw, visMin) : visMin, 0, raw.Length);
-                    int rawSelMax = Mathf.Clamp(_richTextActive ? VisualToRawIndex(raw, visMax) : visMax, 0, raw.Length);
+                    // In Source mode, cursor/selection indices are raw (no rich-text offset).
+                    string raw    = _editValue;
+                    int rawSelMin = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, raw.Length);
+                    int rawSelMax = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, raw.Length);
 
                     if (TryFindOverlappingLink(raw, rawSelMin, rawSelMax,
                             out string existingTarget, out string existingDisplayRaw,
@@ -365,17 +375,35 @@ namespace Heathen.Ogham.Editor
             }));
             toolbar.Add(new VisualElement { style = { width = Gap } });
 
-            // "Source" toggle — flips rich-text rendering on the inner TextElement.
-            // The field content (raw markup) never changes; only the display mode does.
-            var sourceBtn = new Button { text = "Source", tooltip = "Show raw markup (editing still active)" };
-            sourceBtn.style.width  = 60f;
+            // "Formatted" toggle — switches between MD source (editable) and TMPro preview (read-only).
+            // The backing _editValue is always the MD string; Formatted view is smoke-and-mirrors.
+            var sourceBtn = new Button { text = "Formatted", tooltip = "Preview how this text will appear in TMPro" };
+            sourceBtn.style.width  = 74f;
             sourceBtn.style.height = RowH;
             sourceBtn.focusable    = false;
             sourceBtn.RegisterCallback<MouseDownEvent>(_ => CacheSelection(), TrickleDown.TrickleDown);
             sourceBtn.clicked += () => {
-                sourceMode      = !sourceMode;
-                sourceBtn.text  = sourceMode ? "Formatted" : "Source";
-                SetEditorRichText(!sourceMode);
+                if (!_richTextActive)
+                {
+                    // Switch to Formatted (TMPro preview, read-only)
+                    var tmproPreview = OghamInlineLinkParser.ToTMProMarkup(_editValue);
+                    _suppressUndo = true;
+                    _editorField.SetValueWithoutNotify(tmproPreview);
+                    _suppressUndo = false;
+                    _editorField.isReadOnly = true;
+                    SetEditorRichText(true);
+                    sourceBtn.text = "Source";
+                }
+                else
+                {
+                    // Switch back to Source (MD, editable)
+                    _suppressUndo = true;
+                    _editorField.SetValueWithoutNotify(_editValue);
+                    _suppressUndo = false;
+                    _editorField.isReadOnly = false;
+                    SetEditorRichText(false);
+                    sourceBtn.text = "Formatted";
+                }
             };
             toolbar.Add(sourceBtn);
 
@@ -404,7 +432,7 @@ namespace Heathen.Ogham.Editor
             _editorField.selectAllOnMouseUp = false;
 
             _editorField.RegisterCallback<AttachToPanelEvent>(_ => {
-                SetEditorRichText(true);
+                SetEditorRichText(false);   // default: Source mode — MD source, no rich-text rendering
                 _editorField.schedule.Execute(() => {
                     // Internal ScrollView: Vertical mode constrains width (enables
                     // word-wrap); scrollers hidden because the outer ScrollView handles
@@ -426,13 +454,13 @@ namespace Heathen.Ogham.Editor
                 switch (evt.keyCode)
                 {
                     case KeyCode.B:
-                        CacheSelection(); ApplyFormatting("<b>",  "</b>");
+                        CacheSelection(); ApplyFormatting("**",  "**");
                         evt.StopPropagation(); evt.PreventDefault(); break;
                     case KeyCode.I:
-                        CacheSelection(); ApplyFormatting("<i>",  "</i>");
+                        CacheSelection(); ApplyFormatting("*",   "*");
                         evt.StopPropagation(); evt.PreventDefault(); break;
                     case KeyCode.U:
-                        CacheSelection(); ApplyFormatting("<u>",  "</u>");
+                        CacheSelection(); ApplyFormatting("<u>", "</u>");
                         evt.StopPropagation(); evt.PreventDefault(); break;
                 }
             }, TrickleDown.TrickleDown);
@@ -444,9 +472,9 @@ namespace Heathen.Ogham.Editor
             _editorField.RegisterCallback<FocusOutEvent>(_ => CacheSelection(), TrickleDown.TrickleDown);
 
             // Sync model + maintain undo stack on every change.
-            // evt.previousValue gives us what to push; _suppressUndo prevents
-            // loops when we set the value programmatically during undo/redo.
+            // Skipped in Formatted mode — the field shows the TMPro preview string, not the MD source.
             _editorField.RegisterValueChangedCallback(evt => {
+                if (_richTextActive) return;   // Formatted view is read-only; don't touch the MD backing store
                 if (!_suppressUndo)
                 {
                     _undoStack.Add((evt.previousValue ?? "", _cachedCursorIndex));
@@ -673,26 +701,12 @@ namespace Heathen.Ogham.Editor
 
         private void ApplyFormatting(string open, string close)
         {
-            if (_editorField == null) return;
+            if (_editorField == null || _richTextActive) return;  // no-op in Formatted (preview) mode
 
-            string cur = _editorField.value;
-
-            // textSelection reports VISUAL indices when rich text is active.
-            // Convert to raw string indices before splicing markup.
-            int visMin = Mathf.Min(_cachedCursorIndex, _cachedSelectIndex);
-            int visMax = Mathf.Max(_cachedCursorIndex, _cachedSelectIndex);
-            int start, end;
-            if (_richTextActive)
-            {
-                start = Mathf.Clamp(VisualToRawIndex(cur, visMin), 0, cur.Length);
-                end   = Mathf.Clamp(VisualToRawIndex(cur, visMax), 0, cur.Length);
-            }
-            else
-            {
-                start = Mathf.Clamp(visMin, 0, cur.Length);
-                end   = Mathf.Clamp(visMax, 0, cur.Length);
-            }
-
+            // Editing always happens in Source mode — cursor indices are raw (no rich-text offset).
+            string cur   = _editValue;
+            int start    = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, cur.Length);
+            int end      = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, cur.Length);
             string result = cur[..start] + open + cur[start..end] + close + cur[end..];
 
             // Push current state to undo BEFORE the change.
@@ -701,15 +715,11 @@ namespace Heathen.Ogham.Editor
             _redoStack.Clear();
 
             _suppressUndo = true;
-            _editorField.value = result;   // fires RegisterValueChangedCallback to sync model
+            _editorField.value = result;   // fires RegisterValueChangedCallback → syncs _editValue
             _suppressUndo = false;
 
-            // New cursor sits after the closing tag in raw coords; convert to visual.
-            int newRawPos = end + open.Length + close.Length;
-            int newVisPos = _richTextActive
-                ? RawToVisualIndex(result, newRawPos)
-                : Mathf.Clamp(newRawPos, 0, result.Length);
-            RestoreFocusAndCursor(newVisPos);
+            int newPos = Mathf.Clamp(end + open.Length + close.Length, 0, result.Length);
+            RestoreFocusAndCursor(newPos);
         }
 
         // ── Undo / redo ───────────────────────────────────────────────────────
@@ -762,9 +772,17 @@ namespace Heathen.Ogham.Editor
         }
 
         // Restores a saved text+cursor state without pushing a new undo entry.
+        // Always switches back to Source mode so the MD text is displayed and editable.
         private void ApplyRestoredValue(string text, int cursor)
         {
             _editValue = text;
+
+            if (_richTextActive)
+            {
+                // Exit Formatted preview — restore editable Source mode.
+                _editorField.isReadOnly = false;
+                SetEditorRichText(false);
+            }
 
             _suppressUndo = true;
             _editorField.SetValueWithoutNotify(text);
@@ -851,7 +869,7 @@ namespace Heathen.Ogham.Editor
             foreach (var tag in tags)
             {
                 var cap = tag;
-                var uri = $"ogham://{cap}";
+                var uri = $"Ogham://{cap}";
                 menu.AddItem(new GUIContent(cap.Replace('.', '/')), _linkTarget == uri, () => {
                     _linkTarget = uri;
                     _linkTargetField?.SetValueWithoutNotify(uri);
@@ -864,17 +882,19 @@ namespace Heathen.Ogham.Editor
 
         private void CommitLink()
         {
-            // Apply formatting toggles to the display text — markup generated here,
-            // not stored in the display field during editing.
+            // Build MD link: [display](target)
+            // Display text uses TMPro tags for bold/italic/underline/colour — they pass through
+            // OghamInlineLinkParser.ToTMProMarkup unchanged when the formatted preview is shown.
             string display = string.IsNullOrWhiteSpace(_linkDisplayText) ? "link" : _linkDisplayText;
             if (_linkUnderline)   display = $"<u>{display}</u>";
             if (_linkItalic)      display = $"<i>{display}</i>";
             if (_linkBold)        display = $"<b>{display}</b>";
             if (_linkColorActive) display = $"<color=#{ColorUtility.ToHtmlStringRGB(_activeColor)}>{display}</color>";
-            var snippet = $"<link=\"{_linkTarget}\">{display}</link>";
+            var snippet = $"[{display}]({_linkTarget})";
 
+            // Always in Source mode here (link panel blocked in Formatted mode).
+            // Cursor/selection indices are raw — no visual-to-raw conversion needed.
             string prev = _editValue;
-
             string next;
             int cursorAfter;
 
@@ -883,38 +903,23 @@ namespace Heathen.Ogham.Editor
                 // Replacing an existing link span (possibly expanded by selection).
                 int rawStart = Mathf.Clamp(_editingLinkRawStart, 0, prev.Length);
                 int rawEnd   = Mathf.Clamp(_editingLinkRawEnd,   0, prev.Length);
-                next = prev[..rawStart] + snippet + prev[rawEnd..];
-                int newRawPos = rawStart + snippet.Length;
-                cursorAfter = _richTextActive ? RawToVisualIndex(next, newRawPos) : newRawPos;
+                next        = prev[..rawStart] + snippet + prev[rawEnd..];
+                cursorAfter = Mathf.Clamp(rawStart + snippet.Length, 0, next.Length);
             }
             else if (_cachedCursorIndex != _cachedSelectIndex)
             {
                 // Replace selected range with new link.
-                int visMin = Mathf.Min(_cachedCursorIndex, _cachedSelectIndex);
-                int visMax = Mathf.Max(_cachedCursorIndex, _cachedSelectIndex);
-                int rawStart = _richTextActive
-                    ? Mathf.Clamp(VisualToRawIndex(prev, visMin), 0, prev.Length)
-                    : Mathf.Clamp(visMin, 0, prev.Length);
-                int rawEnd = _richTextActive
-                    ? Mathf.Clamp(VisualToRawIndex(prev, visMax), 0, prev.Length)
-                    : Mathf.Clamp(visMax, 0, prev.Length);
-                next = prev[..rawStart] + snippet + prev[rawEnd..];
-                int newRawPos = rawStart + snippet.Length;
-                cursorAfter = _richTextActive
-                    ? RawToVisualIndex(next, newRawPos)
-                    : Mathf.Clamp(newRawPos, 0, next.Length);
+                int rawStart = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
+                int rawEnd   = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
+                next        = prev[..rawStart] + snippet + prev[rawEnd..];
+                cursorAfter = Mathf.Clamp(rawStart + snippet.Length, 0, next.Length);
             }
             else
             {
                 // No selection — insert at cursor position.
-                int rawCursor = _richTextActive
-                    ? Mathf.Clamp(VisualToRawIndex(prev, _cachedCursorIndex), 0, prev.Length)
-                    : Mathf.Clamp(_cachedCursorIndex, 0, prev.Length);
-                next = prev[..rawCursor] + snippet + prev[rawCursor..];
-                int newRawPos = rawCursor + snippet.Length;
-                cursorAfter = _richTextActive
-                    ? RawToVisualIndex(next, newRawPos)
-                    : Mathf.Clamp(newRawPos, 0, next.Length);
+                int rawCursor = Mathf.Clamp(_cachedCursorIndex, 0, prev.Length);
+                next        = prev[..rawCursor] + snippet + prev[rawCursor..];
+                cursorAfter = Mathf.Clamp(rawCursor + snippet.Length, 0, next.Length);
             }
 
             _editValue = next;
@@ -1050,8 +1055,8 @@ namespace Heathen.Ogham.Editor
 
         private void Cancel() { _closing = true; Close(); }
 
-        // Strips the <link=...>...</link> wrapper from the editing span, leaving
-        // the inner display markup (bold, colour, etc.) in place.
+        // Strips the MD link wrapper [display](target) from the editing span, leaving
+        // the inner display text (with any TMPro formatting tags) in place.
         private void RemoveLink()
         {
             if (_editingLinkRawStart < 0) return;
@@ -1060,9 +1065,10 @@ namespace Heathen.Ogham.Editor
             int rawStart = Mathf.Clamp(_editingLinkRawStart, 0, prev.Length);
             int rawEnd   = Mathf.Clamp(_editingLinkRawEnd,   0, prev.Length);
 
-            // Strip the link span completely — remove all markup, leave plain text.
-            string span   = prev[rawStart..rawEnd];
-            string result = StripAllTags(span);
+            // Extract just the display text from [display](target) — keep formatting markup.
+            string span = prev[rawStart..rawEnd];
+            var m = OghamInlineLinkParser.LinkRx.Match(span);
+            string result = m.Success ? m.Groups[1].Value : StripAllTags(span);
             string next   = prev[..rawStart] + result + prev[rawEnd..];
 
             _editValue = next;
@@ -1075,8 +1081,7 @@ namespace Heathen.Ogham.Editor
             _editorField.SetValueWithoutNotify(next);
             _suppressUndo = false;
 
-            int newRawPos   = rawStart + result.Length;
-            int cursorAfter = _richTextActive ? RawToVisualIndex(next, newRawPos) : newRawPos;
+            int cursorAfter = Mathf.Clamp(rawStart + result.Length, 0, next.Length);
 
             _linkPanelOpen         = false;
             _linkPanel.style.display = DisplayStyle.None;
@@ -1129,41 +1134,25 @@ namespace Heathen.Ogham.Editor
                 : new Color(0f, 0f, 0f, 0f);
         }
 
-        // Finds the first <link="target">...</link> whose raw span overlaps [rawSelMin, rawSelMax).
+        // Finds the first MD-style link [display](target) whose raw span overlaps [rawSelMin, rawSelMax).
+        // The source is always the MD string (_editValue) so we use OghamInlineLinkParser.LinkRx.
         private static bool TryFindOverlappingLink(string raw, int rawSelMin, int rawSelMax,
             out string linkTarget, out string linkDisplayRaw, out int linkRawStart, out int linkRawEnd)
         {
             linkTarget = ""; linkDisplayRaw = ""; linkRawStart = -1; linkRawEnd = -1;
-            int i = 0;
-            while (i < raw.Length)
+            if (string.IsNullOrEmpty(raw)) return false;
+
+            foreach (System.Text.RegularExpressions.Match m in OghamInlineLinkParser.LinkRx.Matches(raw))
             {
-                int open = raw.IndexOf('<', i);
-                if (open < 0) break;
-                int tagEnd = raw.IndexOf('>', open);
-                if (tagEnd < 0) break;
-                string tagInner = raw.Substring(open + 1, tagEnd - open - 1);
-                if (!tagInner.StartsWith("link=", StringComparison.OrdinalIgnoreCase))
-                { i = open + 1; continue; }
+                int spanStart = m.Index;
+                int spanEnd   = m.Index + m.Length;
+                if (spanStart >= rawSelMax || spanEnd <= rawSelMin) continue;
 
-                string attr = tagInner.Substring(5);
-                string target = (attr.Length > 0 && attr[0] == '"')
-                    ? attr.Substring(1, Mathf.Max(0, attr.IndexOf('"', 1) - 1))
-                    : attr;
-
-                int contentStart = tagEnd + 1;
-                int closeIdx = raw.IndexOf("</link>", contentStart, StringComparison.OrdinalIgnoreCase);
-                if (closeIdx < 0) { i = tagEnd + 1; continue; }
-
-                int spanEnd = closeIdx + 7;
-                if (open < rawSelMax && spanEnd > rawSelMin)
-                {
-                    linkTarget     = target;
-                    linkDisplayRaw = raw.Substring(contentStart, closeIdx - contentStart);
-                    linkRawStart   = open;
-                    linkRawEnd     = spanEnd;
-                    return true;
-                }
-                i = spanEnd;
+                linkDisplayRaw = m.Groups[1].Value;
+                linkTarget     = m.Groups[2].Success ? m.Groups[2].Value.Trim() : string.Empty;
+                linkRawStart   = spanStart;
+                linkRawEnd     = spanEnd;
+                return true;
             }
             return false;
         }
@@ -1201,27 +1190,26 @@ namespace Heathen.Ogham.Editor
         // Strips <color=...> and </color> from the current selection (or whole string if no selection).
         private void StripColorFromSelection()
         {
-            string prev = _editValue;
+            if (_richTextActive) return;   // no-op in Formatted (preview) mode
 
-            int visMin = Mathf.Min(_cachedCursorIndex, _cachedSelectIndex);
-            int visMax = Mathf.Max(_cachedCursorIndex, _cachedSelectIndex);
-            bool hasSelection = visMin != visMax;
+            // Source mode: cursor/selection indices are always raw — no visual-to-raw conversion.
+            string prev      = _editValue;
+            int rawMin       = Mathf.Clamp(Mathf.Min(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
+            int rawMax       = Mathf.Clamp(Mathf.Max(_cachedCursorIndex, _cachedSelectIndex), 0, prev.Length);
+            bool hasSelection = rawMin != rawMax;
 
             string next;
-            int newRawPos;
+            int newPos;
             if (hasSelection)
             {
-                int rawMin = Mathf.Clamp(_richTextActive ? VisualToRawIndex(prev, visMin) : visMin, 0, prev.Length);
-                int rawMax = Mathf.Clamp(_richTextActive ? VisualToRawIndex(prev, visMax) : visMax, 0, prev.Length);
                 string stripped = StripTagsByName(prev[rawMin..rawMax], "color");
-                next     = prev[..rawMin] + stripped + prev[rawMax..];
-                newRawPos = rawMin + stripped.Length;
+                next   = prev[..rawMin] + stripped + prev[rawMax..];
+                newPos = Mathf.Clamp(rawMin + stripped.Length, 0, next.Length);
             }
             else
             {
-                next     = StripTagsByName(prev, "color");
-                int rawCursor = Mathf.Clamp(_richTextActive ? VisualToRawIndex(prev, _cachedCursorIndex) : _cachedCursorIndex, 0, prev.Length);
-                newRawPos = Mathf.Clamp(rawCursor, 0, next.Length);
+                next   = StripTagsByName(prev, "color");
+                newPos = Mathf.Clamp(rawMin, 0, next.Length);
             }
 
             if (next == prev) return;
@@ -1236,8 +1224,7 @@ namespace Heathen.Ogham.Editor
             _editorField.SetValueWithoutNotify(next);
             _suppressUndo = false;
 
-            int cursorAfter = _richTextActive ? RawToVisualIndex(next, newRawPos) : newRawPos;
-            RestoreFocusAndCursor(cursorAfter);
+            RestoreFocusAndCursor(newPos);
         }
 
         // Strips <tagName=...> / <tagName> and </tagName> pairs from raw, leaving all other markup.
