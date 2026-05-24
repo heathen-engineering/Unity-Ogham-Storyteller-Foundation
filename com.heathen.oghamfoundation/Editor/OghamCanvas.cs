@@ -1565,8 +1565,7 @@ namespace Heathen.Ogham.Editor
             Color fill = (edge.Target != null && edge.Target.Meta.HighlightColor.a > 0f)
                 ? edge.Target.Meta.HighlightColor
                 : edge.Source.HeaderColor;
-            fill.a = hovered ? 0.95f : 0.82f;
-            if (hovered) fill = Color.Lerp(fill, Color.white, 0.15f);
+            fill.a = 0.85f;
             Handles.color = fill;
             Handles.DrawAAConvexPolygon(tl, tr, tip, br, bl);
 

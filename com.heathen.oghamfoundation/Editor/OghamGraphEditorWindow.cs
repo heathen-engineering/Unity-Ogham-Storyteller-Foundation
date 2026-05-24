@@ -129,6 +129,7 @@ namespace Heathen.Ogham.Editor
 
         private void OnEnable()
         {
+            wantsMouseMove = true;
             foreach (var asset in _openAssets)
                 if (asset != null) _canvas?.LoadAsset(asset);
         }
