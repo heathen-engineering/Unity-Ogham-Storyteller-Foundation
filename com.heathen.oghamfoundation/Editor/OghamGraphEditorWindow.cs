@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -31,7 +32,9 @@ namespace Heathen.Ogham.Editor
         private OghamTreePanel _treePanel;
         private IMGUIContainer _canvasContainer;
 
-        private bool _snapToGrid;
+        private bool  _snapToGrid;
+        private float _lastSavedSplit = -1f;
+        private const string SplitPrefKey = "Ogham.Editor.SplitWidth";
         private readonly List<OghamData> _openAssets = new();
 
         // Tracks .ogham JSON-backed assets (synthetic, not in AssetDatabase).
@@ -52,14 +55,17 @@ namespace Heathen.Ogham.Editor
             toolbarContainer.style.flexShrink = 0f;
             root.Add(toolbarContainer);
 
-            var split = new TwoPaneSplitView(0, 220f, TwoPaneSplitViewOrientation.Horizontal);
+            float initSplit = EditorPrefs.GetFloat(SplitPrefKey, 220f);
+            var split = new TwoPaneSplitView(0, initSplit, TwoPaneSplitViewOrientation.Horizontal);
             split.style.flexGrow = 1f;
             root.Add(split);
 
             _treePanel = new OghamTreePanel();
-            _treePanel.OnEntrySelected += HandleEntrySelected;
-            _treePanel.OnAssetSelected += HandleAssetSelected;
-            _treePanel.OnAssetClosed   += HandleAssetClosed;
+            _treePanel.OnEntrySelected          += HandleEntrySelected;
+            _treePanel.OnAssetSelected          += HandleAssetSelected;
+            _treePanel.OnAssetClosed            += HandleAssetClosed;
+            _treePanel.OnAssetVisibilityChanged += (data, hidden) => _canvas?.SetAssetHidden(data, hidden);
+            _treePanel.PathResolver              = data => _jsonBacked.TryGetValue(data, out var kv) ? kv.Path : null;
             split.Add(_treePanel);
 
             _canvasContainer = new IMGUIContainer(DrawCanvas) { style = { flexGrow = 1f } };
@@ -70,6 +76,19 @@ namespace Heathen.Ogham.Editor
             _treePanel.ColorGetter  = data => _canvas.GetAssetColor(data);
             _treePanel.ColorSetter  = (data, color) => { _canvas.SetAssetColor(data, color); Repaint(); };
 
+            // Persist split position across window sessions.
+            _treePanel.RegisterCallback<GeometryChangedEvent>(_ =>
+            {
+                float w = _treePanel.resolvedStyle.width;
+                if (w > 50f && Mathf.Abs(w - _lastSavedSplit) > 2f)
+                {
+                    _lastSavedSplit = w;
+                    EditorPrefs.SetFloat(SplitPrefKey, w);
+                }
+            });
+
+            EditorApplication.projectChanged += OnProjectChanged;
+
             // Defer asset loading to avoid triggering AssetDatabase writes (and assembly reloads)
             // while the editor is still initializing — particularly during window restoration on startup.
             EditorApplication.delayCall += LoadAllAssets;
@@ -79,7 +98,30 @@ namespace Heathen.Ogham.Editor
         {
             var r = _canvasContainer.contentRect;
             if (r.width < 2f) return;
-            _canvas.Draw(new Rect(0f, 0f, r.width, r.height));
+            var rect = new Rect(0f, 0f, r.width, r.height);
+            if (_openAssets.Count == 0) { DrawEmptyState(rect); return; }
+            _canvas.Draw(rect);
+        }
+
+        private static GUIStyle _emptyMsgStyle;
+        private void DrawEmptyState(Rect r)
+        {
+            EditorGUI.DrawRect(r, new Color(0.165f, 0.165f, 0.165f));
+            _emptyMsgStyle ??= new GUIStyle(EditorStyles.label) {
+                fontSize  = 15,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap  = true,
+                normal    = { textColor = new Color(0.55f, 0.55f, 0.55f) },
+            };
+            float msgW = 380f, msgH = 60f;
+            var msgR = new Rect(r.x + (r.width - msgW) * 0.5f,
+                                r.y + (r.height - msgH) * 0.5f - 22f, msgW, msgH);
+            GUI.Label(msgR, "No Stories Found.\nCreate an Ogham Story to get started.", _emptyMsgStyle);
+
+            float btnW = 140f, btnH = 28f;
+            var btnR = new Rect(r.x + (r.width - btnW) * 0.5f, msgR.yMax + 10f, btnW, btnH);
+            if (GUI.Button(btnR, "Create Story"))
+                ShowNewOghamFileDialog();
         }
 
         private void OnEnable()
@@ -90,6 +132,8 @@ namespace Heathen.Ogham.Editor
 
         private void OnDisable()
         {
+            EditorApplication.projectChanged -= OnProjectChanged;
+
             if (_treePanel != null)
             {
                 _treePanel.OnEntrySelected -= HandleEntrySelected;
@@ -171,6 +215,7 @@ namespace Heathen.Ogham.Editor
                 {
                     File.WriteAllText(path, doc.ToJson());
                     AssetDatabase.ImportAsset(path); // refresh compiled sub-assets
+                    EditorUtility.ClearDirty(data);
                 }
                 catch (Exception e)
                 {
@@ -233,39 +278,88 @@ namespace Heathen.Ogham.Editor
             }
         }
 
+        // Detects .ogham files added or removed from the project and refreshes the window.
+        private void OnProjectChanged()
+        {
+            if (this == null) return;
+
+            var dataPath   = Application.dataPath;
+            if (!Directory.Exists(dataPath)) return;
+            var foundPaths = new HashSet<string>();
+            foreach (var abs in Directory.GetFiles(dataPath, "*.ogham", SearchOption.AllDirectories))
+                foundPaths.Add("Assets" + abs.Substring(dataPath.Length).Replace('\\', '/'));
+
+            var openPaths = new HashSet<string>(_jsonBacked.Values.Select(v => v.Path));
+
+            // Load newly appeared files.
+            foreach (var p in foundPaths)
+                if (!openPaths.Contains(p)) LoadOghamFile(p);
+
+            // Unload files that disappeared.
+            var removed = _jsonBacked.Where(kv => !foundPaths.Contains(kv.Value.Path))
+                                     .Select(kv => kv.Key).ToList();
+            foreach (var key in removed) HandleAssetClosed(key);
+
+            if (removed.Count > 0) _treePanel?.Rebuild();
+        }
+
+        // Right-click in the Project window: Assets/Create/Ogham/Story
+        [MenuItem("Assets/Create/Ogham/Story")]
+        private static void CreateOghamStoryFromMenu()
+        {
+            var path = EditorUtility.SaveFilePanelInProject(
+                "New Ogham Story File", "MyStory", "ogham",
+                "Create a new .ogham story source file.", "Assets");
+            if (string.IsNullOrEmpty(path)) return;
+            var doc = OghamJsonDocument.CreateNew();
+            File.WriteAllText(path, doc.ToJson());
+            AssetDatabase.ImportAsset(path);
+            if (HasOpenInstances<OghamGraphEditorWindow>())
+                GetWindow<OghamGraphEditorWindow>().LoadOghamFile(path);
+        }
+
         // ── Toolbar ───────────────────────────────────────────────────────────
 
         private void DrawToolbar()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                if (GUILayout.Button("New File…", EditorStyles.toolbarButton, GUILayout.Width(72)))
-                    ShowNewAssetDialog();
+                if (GUILayout.Button(new GUIContent("Support", "Join the Heathen community on Discord"),
+                    EditorStyles.toolbarButton, GUILayout.Width(58)))
+                    Application.OpenURL("https://discord.gg/tytrBwwHZe");
 
-                if (GUILayout.Button("Add Entry", EditorStyles.toolbarButton, GUILayout.Width(76)))
-                    ShowAddEntryMenu();
+                if (GUILayout.Button(new GUIContent("Docs", "Open Heathen documentation"),
+                    EditorStyles.toolbarButton, GUILayout.Width(40)))
+                    Application.OpenURL("https://heathen.group/");
 
                 if (_jsonBacked.Count > 0)
                 {
                     GUILayout.Space(4f);
+                    bool isDirty = _jsonBacked.Keys.Any(a => a != null && EditorUtility.IsDirty(a));
+                    var savedBg = GUI.backgroundColor;
+                    if (isDirty) GUI.backgroundColor = new Color(1f, 0.85f, 0.2f);
                     if (GUILayout.Button("Save .ogham", EditorStyles.toolbarButton, GUILayout.Width(84)))
                         SaveOghamFiles();
+                    GUI.backgroundColor = savedBg;
                 }
 
                 GUILayout.Space(8f);
 
+                var savedSnapBg = GUI.backgroundColor;
+                if (_snapToGrid) GUI.backgroundColor = new Color(0.45f, 0.75f, 1f);
                 var newSnap = GUILayout.Toggle(_snapToGrid, "Snap", EditorStyles.toolbarButton, GUILayout.Width(48));
+                GUI.backgroundColor = savedSnapBg;
                 if (newSnap != _snapToGrid) { _snapToGrid = newSnap; if (_canvas != null) _canvas.SnapToGrid = newSnap; }
 
                 GUILayout.FlexibleSpace();
 
-                // Zoom display + snap-to-natural-size button (centred in the flexible space).
+                // Zoom slider: left = 100% (zoom=1), right = 15% (zoom=0.15). No value label.
                 if (_canvas != null)
                 {
-                    var zoomLabel = $"{Mathf.RoundToInt(_canvas.Zoom * 100f)}%";
-                    GUILayout.Label(zoomLabel, EditorStyles.toolbarButton, GUILayout.Width(46f));
-                    if (GUILayout.Button("100%", EditorStyles.toolbarButton, GUILayout.Width(42f)))
-                        _canvas.SetZoom(1f);
+                    float sliderVal = 1f - (_canvas.Zoom - 0.15f) / (1f - 0.15f);
+                    float newSlider = GUILayout.HorizontalSlider(sliderVal, 0f, 1f, GUILayout.Width(120f));
+                    if (!Mathf.Approximately(newSlider, sliderVal))
+                        _canvas.SetZoom(Mathf.Lerp(1f, 0.15f, newSlider));
                 }
 
                 GUILayout.FlexibleSpace();
