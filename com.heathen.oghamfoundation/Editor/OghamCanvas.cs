@@ -42,6 +42,8 @@ namespace Heathen.Ogham.Editor
         public string[] OpLabels  = System.Array.Empty<string>();
         public string[] KeyLabels = System.Array.Empty<string>();
         public string[] OptLabels = System.Array.Empty<string>();
+        // Cached per-key row heights — avoids running StripMarkup regex every frame in OutputPinPos / DrawSection.
+        public float[]  KeyHeights = System.Array.Empty<float>();
     }
 
     internal class CanvasEdge
@@ -71,6 +73,7 @@ namespace Heathen.Ogham.Editor
         private readonly List<CanvasEdge>         _edges   = new();
         private readonly List<CanvasAlias>        _aliases = new();
         private readonly Dictionary<OghamData, Color> _assetColors = new();
+        private readonly HashSet<OghamData>           _hiddenAssets = new();
         private int _colorIndex;
 
         // ── View state ────────────────────────────────────────────────────────
@@ -186,7 +189,7 @@ namespace Heathen.Ogham.Editor
         private const float TabH        = 18f;
         private const float TabArrow    = 7f;
         private const float TabDefaultW = 27f;
-        private const float TabHoverW   = 60f;
+        private const float TabHoverW   = 160f;  // wide enough for a full tag path at 9pt
         private const float TabPadX     = 5f;
 
         // Zoom-level LOD thresholds.
@@ -255,6 +258,7 @@ namespace Heathen.Ogham.Editor
             _assets.RemoveAt(i);
             _metas.RemoveAt(i);
             _assetColors.Remove(data);
+            _hiddenAssets.Remove(data);
             if (ActiveAsset == data) ActiveAsset = _assets.Count > 0 ? _assets[0] : null;
             RebuildCanvas();
         }
@@ -268,6 +272,13 @@ namespace Heathen.Ogham.Editor
         public void SetActiveAsset(OghamData data)
         {
             if (data != null && _assets.Contains(data)) ActiveAsset = data;
+        }
+
+        public void SetAssetHidden(OghamData data, bool hidden)
+        {
+            if (hidden) _hiddenAssets.Add(data);
+            else _hiddenAssets.Remove(data);
+            _host?.Repaint();
         }
 
         public Color GetAssetColor(OghamData data)
@@ -826,7 +837,7 @@ namespace Heathen.Ogham.Editor
             float opsRows  = n.Meta.OpsExpanded ? n.Entry.EntryOperations.Count : 0;
             float keyH     = 0f;
             if (n.Meta.FieldsExpanded)
-                foreach (var key in n.Entry.ContentKeys) keyH += TextKeyHEstimate(key);
+                foreach (var h in n.KeyHeights) keyH += h;  // use cached heights — no regex per frame
             float top = n.Rect.y + HeaderH + lblStrip + MetaH + 4f
                       + SectionHdrH + opsRows * RowH
                       + SectionHdrH + keyH
@@ -943,6 +954,7 @@ namespace Heathen.Ogham.Editor
                 foreach (var edge in _edges)
                 {
                     if (!IsTabMode(edge)) continue;
+                    if (_hiddenAssets.Contains(edge.Source.Asset)) continue;
                     int oi = edge.OptionIndex; // cached — avoids O(n) IndexOf per edge
                     if (oi < 0) continue;
                     bool wasHovered = edge == _hoveredTabEdge;
@@ -1328,6 +1340,11 @@ namespace Heathen.Ogham.Editor
             for (int i = 0; i < keyCount; i++)
                 node.KeyLabels[i] = KeySummary(node.Entry.ContentKeys[i], i, keyCount);
 
+            // Cache row heights — prevents TextKeyHEstimate (regex) from running every frame.
+            if (node.KeyHeights.Length != keyCount) node.KeyHeights = new float[keyCount];
+            for (int i = 0; i < keyCount; i++)
+                node.KeyHeights[i] = TextKeyHEstimate(node.Entry.ContentKeys[i]);
+
             int optCount = node.Entry.Options.Count;
             if (node.OptLabels.Length != optCount) node.OptLabels = new string[optCount];
             for (int i = 0; i < optCount; i++)
@@ -1356,6 +1373,10 @@ namespace Heathen.Ogham.Editor
             foreach (var edge in _edges)
             {
                 if (edge.Target == null) continue;
+                // Skip nodes that are hidden or loop-back to themselves (drawn in DrawNodePins)
+                if (_hiddenAssets.Contains(edge.Source.Asset)) continue;
+                if (_hiddenAssets.Contains(edge.Target.Asset)) continue;
+                if (edge.Source == edge.Target) continue;
                 int optIdx = edge.OptionIndex;
                 if (optIdx < 0) continue;
 
@@ -1509,8 +1530,16 @@ namespace Heathen.Ogham.Editor
 
             // Defer the GUI.Label outside Handles.BeginGUI/EndGUI — calling GUI.Label inside
             // the Handles scope corrupts the GL state and causes bezier lines to render black.
-            string label = edge.Target != null ? edge.Target.DisplayName : "?";
-            if (!hovered && label.Length > 4) label = label.Substring(0, 4);
+            string label;
+            if (hovered)
+                label = edge.Target != null
+                    ? (!string.IsNullOrEmpty(edge.Target.Entry.TagPath) ? edge.Target.Entry.TagPath : edge.Target.DisplayName)
+                    : "?";
+            else
+            {
+                label = edge.Target != null ? edge.Target.DisplayName : "?";
+                if (label.Length > 4) label = label.Substring(0, 4);
+            }
             _pendingTabLabels.Add((new Rect(left + px, top, w - px, h), label));
         }
 
@@ -1552,6 +1581,7 @@ namespace Heathen.Ogham.Editor
 
         private void DrawNode(CanvasNode node)
         {
+            if (_hiddenAssets.Contains(node.Asset)) return;
             var sr = ToScreen(node.Rect);
 
             // Frustum cull — skip nodes entirely outside the visible area.
@@ -1714,9 +1744,7 @@ namespace Heathen.Ogham.Editor
                     contentKey = node.Entry.ContentKeys[i];
 
                 float rh = contentKey != null
-                    ? (contentKey.Type == OghamContentType.Text
-                        ? TextKeyHEstimate(contentKey)
-                        : ContentKeyRowH(contentKey)) * _zoom
+                    ? (i < node.KeyHeights.Length ? node.KeyHeights[i] : TextKeyHEstimate(contentKey)) * _zoom
                     : RowH * _zoom;
 
                 if (sectionIdx == 1)
@@ -1787,6 +1815,7 @@ namespace Heathen.Ogham.Editor
         // Must be called inside Handles.BeginGUI() / EndGUI().
         private void DrawNodePins(CanvasNode node)
         {
+            if (_hiddenAssets.Contains(node.Asset)) return;
             var sr = ToScreen(node.Rect);
 
             // Frustum cull — skip off-screen nodes (matches DrawNode early-out).
@@ -1814,12 +1843,17 @@ namespace Heathen.Ogham.Editor
             float pinSz         = Mathf.Max(PinR * 2f * _zoom, LodPinMinR * 2f);
             DrawTrianglePin(inputPos, pinSz, new Color(0.416f, 0.690f, 0.816f), inputConnected);
 
-            // Output pins (one per option) — right-pointing triangles
+            // Output pins (one per option) — right-pointing triangles, or loop icon for self-targeting options
             if (node.Meta.ChoicesExpanded)
             {
                 for (int i = 0; i < node.Entry.Options.Count; i++)
                 {
-                    var opt        = node.Entry.Options[i];
+                    var opt = node.Entry.Options[i];
+                    if (!string.IsNullOrEmpty(opt.TargetEntryPath) && opt.TargetEntryPath == node.Entry.TagPath)
+                    {
+                        DrawLoopbackSymbol(node, i, pinSz);
+                        continue;
+                    }
                     bool connected = _connectedAsSource.Contains((node, opt));
                     var  outPos    = (Vector3)ToScreen(OutputPinPos(node, i));
                     DrawTrianglePin(outPos, pinSz, new Color(0.816f, 0.565f, 0.290f), connected);
@@ -1880,6 +1914,40 @@ namespace Heathen.Ogham.Editor
                 Handles.color = color * 0.85f;
                 Handles.DrawAAPolyLine(2f, top, tip, bot, top);
             }
+        }
+
+        // Draws a loop-back arc icon for options whose target is their own entry.
+        // Arc travels: left → up → right → down (3/4 circle clockwise on screen), arrowhead at bottom pointing left.
+        // Must be called inside Handles.BeginGUI() / EndGUI().
+        private void DrawLoopbackSymbol(CanvasNode node, int optIdx, float pinSz)
+        {
+            var pinS = (Vector2)ToScreen(OutputPinPos(node, optIdx));
+            float sz  = Mathf.Max(pinSz * 0.5f, 7f * _zoom);
+            float cx  = pinS.x + sz;   // arc centre X, to the right of the pin
+            float cy  = pinS.y;
+
+            Color c = new Color(0.816f, 0.565f, 0.290f, 0.88f);
+            Handles.color = c;
+
+            // 3/4 arc: angle goes from π (left) to 2.5π (bottom), stepping through top and right.
+            // In Unity screen-space (Y-down), increasing angle sweeps clockwise visually.
+            const int segs = 12;
+            var pts = new Vector3[segs + 1];
+            for (int i = 0; i <= segs; i++)
+            {
+                float t     = (float)i / segs;
+                float angle = Mathf.PI + Mathf.PI * 1.5f * t;
+                pts[i] = new Vector3(cx + Mathf.Cos(angle) * sz, cy + Mathf.Sin(angle) * sz, 0f);
+            }
+            Handles.DrawAAPolyLine(Mathf.Max(1f, 1.5f * _zoom), pts);
+
+            // Arrowhead at arc end (bottom of circle), pointing left — tangent at that point.
+            var tip    = (Vector2)pts[segs];
+            float arrSz = Mathf.Max(3f, 4f * _zoom);
+            Handles.DrawAAConvexPolygon(
+                new Vector3(tip.x,          tip.y,              0f),
+                new Vector3(tip.x + arrSz,  tip.y - arrSz * 0.5f, 0f),
+                new Vector3(tip.x + arrSz,  tip.y + arrSz * 0.5f, 0f));
         }
 
         // ── Row labels ────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ namespace Heathen.Ogham.Editor
         public event System.Action<OghamData, DialogueEntry> OnEntrySelected;
         public event System.Action<OghamData>                OnAssetSelected;
         public event System.Action<OghamData>                OnAssetClosed;
+        public event System.Action<OghamData, bool>          OnAssetVisibilityChanged;
 
         // Optional delegate for resolving the display name of an entry.
         public System.Func<DialogueEntry, string> NameResolver { get; set; }
@@ -22,6 +23,12 @@ namespace Heathen.Ogham.Editor
         // Optional delegates for reading and writing per-asset node header colors.
         public System.Func<OghamData, Color>   ColorGetter { get; set; }
         public System.Action<OghamData, Color> ColorSetter { get; set; }
+
+        // Optional: resolve the AssetDatabase path for a synthetic (.ogham-backed) asset so clicks can ping the file.
+        public System.Func<OghamData, string> PathResolver { get; set; }
+
+        // Assets whose nodes should be hidden in the canvas view.
+        public readonly HashSet<OghamData> HiddenAssets = new();
 
         private readonly ScrollView                  _scroll;
         private readonly List<OghamData>             _assets   = new();
@@ -105,7 +112,8 @@ namespace Heathen.Ogham.Editor
 
                 _scroll.Add(MakeAssetRow(asset));
 
-                if (!_expanded[asset] && !searching) continue;
+                bool entryVisible = (!HiddenAssets.Contains(asset)) && (_expanded[asset] || searching);
+                if (!entryVisible) continue;
 
                 foreach (var entry in asset.Entries)
                 {
@@ -158,23 +166,38 @@ namespace Heathen.Ogham.Editor
                 row.Add(colorField);
             }
 
+            // Label: clicking pings the file in the Project window.
             var label = new Label(asset.name) { style = { flexGrow = 1f } };
-            label.RegisterCallback<ClickEvent>(_ => OnAssetSelected?.Invoke(asset));
+            label.RegisterCallback<ClickEvent>(_ =>
+            {
+                string path = PathResolver?.Invoke(asset);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    var fileObj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
+                    EditorGUIUtility.PingObject(fileObj != null ? fileObj : (UnityEngine.Object)asset);
+                }
+                else
+                {
+                    EditorGUIUtility.PingObject(asset);
+                }
+            });
             row.Add(label);
 
-            var ping = new Button(() => EditorGUIUtility.PingObject(asset))
+            // Eye toggle — show/hide this asset's nodes in the canvas.
+            bool isHidden = HiddenAssets.Contains(asset);
+            var eyeBtn = new Button(() =>
             {
-                text  = "•",
+                bool nowHidden = !HiddenAssets.Contains(asset);
+                if (nowHidden) HiddenAssets.Add(asset); else HiddenAssets.Remove(asset);
+                OnAssetVisibilityChanged?.Invoke(asset, nowHidden);
+                Rebuild();
+            })
+            {
+                text  = isHidden ? "○" : "◉",
                 style = { width = 18f },
             };
-            row.Add(ping);
-
-            var close = new Button(() => OnAssetClosed?.Invoke(asset))
-            {
-                text  = "×",
-                style = { width = 18f, color = new Color(0.8f, 0.4f, 0.4f) },
-            };
-            row.Add(close);
+            if (isHidden) eyeBtn.style.opacity = 0.45f;
+            row.Add(eyeBtn);
 
             return row;
         }
