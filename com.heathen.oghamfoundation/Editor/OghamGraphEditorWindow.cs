@@ -99,9 +99,9 @@ namespace Heathen.Ogham.Editor
             // so they don't accumulate in Unity's object system across assembly reloads.
             foreach (var kv in _jsonBacked)
             {
-                if (_canvas != null) { var m = _canvas.GetMeta(kv.Key); if (m != null) Object.DestroyImmediate(m); }
+                if (_canvas != null) { var m = _canvas.GetMeta(kv.Key); if (m != null) UnityEngine.Object.DestroyImmediate(m); }
                 _openAssets.Remove(kv.Key); // evict before destroy so LoadAllAssets re-discovers from file
-                if (kv.Key != null) Object.DestroyImmediate(kv.Key);
+                if (kv.Key != null) UnityEngine.Object.DestroyImmediate(kv.Key);
             }
             _jsonBacked.Clear();
         }
@@ -470,8 +470,8 @@ namespace Heathen.Ogham.Editor
             // Destroy synthetic ScriptableObjects that were never added to the AssetDatabase.
             if (wasSynthetic)
             {
-                if (syntheticMeta != null) Object.DestroyImmediate(syntheticMeta);
-                if (asset         != null) Object.DestroyImmediate(asset);
+                if (syntheticMeta != null) UnityEngine.Object.DestroyImmediate(syntheticMeta);
+                if (asset         != null) UnityEngine.Object.DestroyImmediate(asset);
             }
         }
     }
