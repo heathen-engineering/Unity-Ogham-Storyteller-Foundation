@@ -312,7 +312,7 @@ namespace Heathen.Ogham.Editor
             const float pad = 60f;
             float zoomX = (_canvasRect.width  - pad * 2f) / bounds.width;
             float zoomY = (_canvasRect.height - pad * 2f) / bounds.height;
-            _zoom = Mathf.Clamp(Mathf.Min(zoomX, zoomY), 0.15f, 2.5f);
+            _zoom = Mathf.Clamp(Mathf.Min(zoomX, zoomY), 0.15f, 1.0f);
             _pan  = _canvasRect.center - bounds.center * _zoom;
             SaveViewTransform();
             _host?.Repaint();
@@ -963,7 +963,7 @@ namespace Heathen.Ogham.Editor
             {
                 var pivot  = mp;
                 var before = ToCanvas(pivot);
-                _zoom      = Mathf.Clamp(_zoom - e.delta.y * 0.05f, 0.15f, 2.5f);
+                _zoom      = Mathf.Clamp(_zoom - e.delta.y * 0.05f, 0.15f, 1.0f);
                 _pan       = pivot - before * _zoom;
                 SaveViewTransform();
                 e.Use();
@@ -2626,7 +2626,7 @@ namespace Heathen.Ogham.Editor
 
         public void SetZoom(float z)
         {
-            _zoom = Mathf.Clamp(z, 0.15f, 2.5f);
+            _zoom = Mathf.Clamp(z, 0.15f, 1.0f);
             _pan  = _canvasRect.center - ToCanvas(_canvasRect.center) * _zoom;
             SaveViewTransform();
             _host?.Repaint();

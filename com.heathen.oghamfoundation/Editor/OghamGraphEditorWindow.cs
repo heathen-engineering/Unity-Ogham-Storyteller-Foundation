@@ -42,8 +42,18 @@ namespace Heathen.Ogham.Editor
         {
             _canvas = new OghamCanvas(this);
 
-            var root  = rootVisualElement;
+            var root = rootVisualElement;
+
+            // Toolbar lives in its own fixed-height IMGUI container so the split view below
+            // occupies the remaining space. The canvas IMGUIContainer's contentRect then
+            // reflects only the canvas area — no y-offset arithmetic needed.
+            var toolbarContainer = new IMGUIContainer(DrawToolbar);
+            toolbarContainer.style.height    = 22f;
+            toolbarContainer.style.flexShrink = 0f;
+            root.Add(toolbarContainer);
+
             var split = new TwoPaneSplitView(0, 220f, TwoPaneSplitViewOrientation.Horizontal);
+            split.style.flexGrow = 1f;
             root.Add(split);
 
             _treePanel = new OghamTreePanel();
@@ -52,7 +62,6 @@ namespace Heathen.Ogham.Editor
             _treePanel.OnAssetClosed   += HandleAssetClosed;
             split.Add(_treePanel);
 
-            // Single IMGUIContainer for both toolbar and canvas — reduces GL surface count on Linux.
             _canvasContainer = new IMGUIContainer(DrawCanvas) { style = { flexGrow = 1f } };
             split.Add(_canvasContainer);
 
@@ -70,14 +79,7 @@ namespace Heathen.Ogham.Editor
         {
             var r = _canvasContainer.contentRect;
             if (r.width < 2f) return;
-
-            // Draw toolbar in the top 22 px of the single IMGUI container.
-            const float ToolbarH = 22f;
-            using (new GUILayout.AreaScope(new Rect(0f, 0f, r.width, ToolbarH)))
-                DrawToolbar();
-
-            if (r.height <= ToolbarH) return;
-            _canvas.Draw(new Rect(0f, ToolbarH, r.width, r.height - ToolbarH));
+            _canvas.Draw(new Rect(0f, 0f, r.width, r.height));
         }
 
         private void OnEnable()
