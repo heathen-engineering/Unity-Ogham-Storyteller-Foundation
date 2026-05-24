@@ -40,8 +40,8 @@ namespace Heathen.Ogham.Editor
         private const float ValW  = 90f;
         private const float ExW   = 22f;   // exact-match toggle width
 
-        // Condition block: helpBox overhead + tag row + fields row + spacing
-        private const float CondH = 8f + Row * 2f + 4f;
+        // Condition block: helpBox overhead + tag row + fields row + inner spacing + trailing Space(2)
+        private const float CondH = 8f + Row * 2f + 4f + 2f;
 
         private struct CondRow
         {

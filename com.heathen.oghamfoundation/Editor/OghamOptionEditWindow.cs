@@ -26,6 +26,11 @@ namespace Heathen.Ogham.Editor
     //   ┌────────────────────────────────────────────────────────┐
     //   │ [ TagPath ][ ▾ ]                                       │
     //   │ [ Op ▼ ][ Value                              ][ − ]    │
+    //   │   Conditions (N)                              [+]      │
+    //   │   ┌──────────────────────────────────────────────────┐ │
+    //   │   │ [ TagPath ][ ▾ ]                                 │ │
+    //   │   │ [ ⊞ ][ Compare ▼ ][ Value            ][ − ]     │ │
+    //   │   └──────────────────────────────────────────────────┘ │
     //   └────────────────────────────────────────────────────────┘
     //   [ Save ][ Cancel ]
     public class OghamOptionEditWindow : EditorWindow
@@ -39,7 +44,7 @@ namespace Heathen.Ogham.Editor
         private string            _keyValue;
         private string            _targetEntry;
         private readonly List<CondRow> _conditions = new();
-        private readonly List<OpRow>   _operations = new();
+        private readonly List<OpRowData> _operations = new();
 
         private string  _keyDisplayValue;
         private bool    _keyExists;
@@ -54,20 +59,10 @@ namespace Heathen.Ogham.Editor
         private const float ValW  = 80f;
         private const float ExW   = 22f;
         private const float ModeW = 90f;
+        private const float HelpH = 26f;   // EditorGUILayout.HelpBox (no icon) renders taller than Row
 
-        // Block heights: helpBox overhead (8) + tag row + fields row + spacing (2)
-        private const float CondH = 8f + Row * 2f + 4f;
-        private const float OpH   = 8f + Row * 2f + 4f;
-
-        private bool ValueMismatch
-        {
-            get
-            {
-                if (_keyMode != LexiconLocMode.Localised || !_keyExists) return false;
-                var current = LexiconRegistry.ResolveString(LexiconRegistry.Hash(_keyValue)) ?? "";
-                return _keyDisplayValue != current;
-            }
-        }
+        // Block heights: helpBox overhead + tag row + fields row + trailing Space(2)
+        private const float CondH = 8f + Row * 2f + 4f + 2f;
 
         private struct CondRow
         {
@@ -80,11 +75,23 @@ namespace Heathen.Ogham.Editor
             public string                  CompareTagName;
         }
 
-        private struct OpRow
+        // Operations can have their own conditions; use a class so the List is heap-allocated.
+        private sealed class OpRowData
         {
             public string                TagName;
             public GameplayTagArithmetic Arithmetic;
             public long                  Value;
+            public readonly List<CondRow> Conditions = new();
+        }
+
+        private bool ValueMismatch
+        {
+            get
+            {
+                if (_keyMode != LexiconLocMode.Localised || !_keyExists) return false;
+                var current = LexiconRegistry.ResolveString(LexiconRegistry.Hash(_keyValue)) ?? "";
+                return _keyDisplayValue != current;
+            }
         }
 
         public static void Open(DialogueOption item, OghamData asset, Action onRefresh, Vector2 anchor)
@@ -102,25 +109,21 @@ namespace Heathen.Ogham.Editor
 
             w._conditions.Clear();
             foreach (var c in item.Conditions)
-                w._conditions.Add(new CondRow
-                {
-                    TagName        = c.Tag.IsValid ? OghamTagHelper.GetTagName(c.Tag.Id) : "",
-                    Comparison     = c.Comparison,
-                    Value          = (long)c.CompareValue,
-                    ExactMatch     = c.ExactMatch,
-                    Logic          = c.LogicOp,
-                    UseCompareTag  = c.CompareTag.Id != 0,
-                    CompareTagName = c.CompareTag.Id != 0 ? OghamTagHelper.GetTagName(c.CompareTag.Id) : "",
-                });
+                w._conditions.Add(MakeCondRow(c));
 
             w._operations.Clear();
             foreach (var op in item.Operations)
-                w._operations.Add(new OpRow
+            {
+                var row = new OpRowData
                 {
                     TagName    = op.Tag.IsValid ? OghamTagHelper.GetTagName(op.Tag.Id) : "",
                     Arithmetic = op.Arithmetic,
                     Value      = (long)op.Value,
-                });
+                };
+                foreach (var c in op.Conditions)
+                    row.Conditions.Add(MakeCondRow(c));
+                w._operations.Add(row);
+            }
 
             w._keyDisplayValue = "";
             w._keyExists       = false;
@@ -135,22 +138,47 @@ namespace Heathen.Ogham.Editor
             w.Focus();
         }
 
+        private static CondRow MakeCondRow(GameplayTagCondition c) => new CondRow
+        {
+            TagName        = c.Tag.IsValid ? OghamTagHelper.GetTagName(c.Tag.Id) : "",
+            Comparison     = c.Comparison,
+            Value          = (long)c.CompareValue,
+            ExactMatch     = c.ExactMatch,
+            Logic          = c.LogicOp,
+            UseCompareTag  = c.CompareTag.Id != 0,
+            CompareTagName = c.CompareTag.Id != 0 ? OghamTagHelper.GetTagName(c.CompareTag.Id) : "",
+        };
+
         private float ComputeHeight()
         {
-            // tag row + key row(s) + target row + hint + cond header + conds + op header + ops + buttons
             float keyRows = _keyMode == LexiconLocMode.Localised ? Row * 2f : Row;
             float h = 4f
                     + Row                            // option tag
                     + 4f + keyRows                   // key mode + key value [+ resolved value]
                     + 4f + Row                       // target entry
-                    + 4f + Row                       // hint (EditorGUILayout.HelpBox)
+                    + 4f + HelpH                     // hint (HelpBox — taller than a bare Row)
                     + 4f + Row                       // conditions header
                     + _conditions.Count * CondH
                     + 4f + Row                       // operations header
-                    + _operations.Count * OpH
+                    + TotalOperationHeight()
                     + 6f + Row + 6f;                 // buttons
             return Mathf.Min(h, MaxH);
         }
+
+        // Sum of each operation's rendered height: header rows + per-op condition rows + trailing Space(2).
+        private float TotalOperationHeight()
+        {
+            float total = 0;
+            foreach (var op in _operations)
+                total += OpBaseHeight(op) + 2f;
+            return total;
+        }
+
+        // Height of one operation block: helpBox overhead + tag row + op+value row + cond header + cond rows.
+        private static float OpBaseHeight(OpRowData op) =>
+            8f + Row * 2f + 4f           // outer helpBox + tag row + arithmetic+value row
+            + Row                        // "Conditions (N)" sub-header
+            + op.Conditions.Count * CondH;
 
         private static Rect PlaceAtAnchor(Vector2 anchor, float w, float h)
         {
@@ -196,7 +224,6 @@ namespace Heathen.Ogham.Editor
 
             if (_keyMode == LexiconLocMode.Localised)
             {
-                // Resolved value row: ⚠ indicator + editable value field
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     if (ValueMismatch)
@@ -220,7 +247,7 @@ namespace Heathen.Ogham.Editor
             }
             EditorGUILayout.HelpBox("Leave empty to close the conversation.", MessageType.None);
 
-            // ── Conditions ────────────────────────────────────────────────────
+            // ── Option Conditions ─────────────────────────────────────────────
             EditorGUILayout.Space(4f);
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -231,7 +258,7 @@ namespace Heathen.Ogham.Editor
                     ResizeToContent();
                 }
             }
-            DrawConditionRows();
+            DrawConditionRows(_conditions);
 
             // ── Operations ────────────────────────────────────────────────────
             EditorGUILayout.Space(4f);
@@ -240,7 +267,7 @@ namespace Heathen.Ogham.Editor
                 EditorGUILayout.LabelField($"Operations ({_operations.Count})", EditorStyles.boldLabel);
                 if (GUILayout.Button("+", GUILayout.Width(22f)))
                 {
-                    _operations.Add(new OpRow { Arithmetic = GameplayTagArithmetic.Set, Value = 1 });
+                    _operations.Add(new OpRowData { Arithmetic = GameplayTagArithmetic.Set, Value = 1 });
                     ResizeToContent();
                 }
             }
@@ -258,11 +285,11 @@ namespace Heathen.Ogham.Editor
             }
         }
 
-        private void DrawConditionRows()
+        private void DrawConditionRows(List<CondRow> list)
         {
-            for (int i = 0; i < _conditions.Count; i++)
+            for (int i = 0; i < list.Count; i++)
             {
-                var c = _conditions[i];
+                var c = list[i];
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
                 using (new EditorGUILayout.HorizontalScope())
@@ -272,7 +299,7 @@ namespace Heathen.Ogham.Editor
                     if (GUILayout.Button("▾", GUILayout.Width(PickW)))
                         OghamTagHelper.ShowTagPicker(s =>
                         {
-                            var r = _conditions[captI]; r.TagName = s; _conditions[captI] = r; Repaint();
+                            var r = list[captI]; r.TagName = s; list[captI] = r; Repaint();
                         });
                 }
 
@@ -301,7 +328,7 @@ namespace Heathen.Ogham.Editor
                         if (GUILayout.Button("▾", GUILayout.Width(PickW)))
                             OghamTagHelper.ShowTagPicker(s =>
                             {
-                                var r = _conditions[captI]; r.CompareTagName = s; _conditions[captI] = r; Repaint();
+                                var r = list[captI]; r.CompareTagName = s; list[captI] = r; Repaint();
                             });
                     }
                     else
@@ -312,14 +339,14 @@ namespace Heathen.Ogham.Editor
 
                     if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22f)))
                     {
-                        _conditions.RemoveAt(captI);
+                        list.RemoveAt(captI);
                         ResizeToContent();
                         EditorGUILayout.EndVertical();
                         break;
                     }
                 }
 
-                _conditions[i] = c;
+                list[i] = c;
                 EditorGUILayout.EndVertical();
                 EditorGUILayout.Space(2f);
             }
@@ -332,6 +359,7 @@ namespace Heathen.Ogham.Editor
                 var op = _operations[i];
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
+                // ── Tag + picker ──────────────────────────────────────────────
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     var captI = i;
@@ -339,10 +367,12 @@ namespace Heathen.Ogham.Editor
                     if (GUILayout.Button("▾", GUILayout.Width(PickW)))
                         OghamTagHelper.ShowTagPicker(s =>
                         {
-                            var r = _operations[captI]; r.TagName = s; _operations[captI] = r; Repaint();
+                            _operations[captI].TagName = s; Repaint();
                         });
                 }
 
+                // ── Arithmetic + value + remove ───────────────────────────────
+                bool removed = false;
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     op.Arithmetic = (GameplayTagArithmetic)EditorGUILayout.EnumPopup(op.Arithmetic,
@@ -354,12 +384,26 @@ namespace Heathen.Ogham.Editor
                     {
                         _operations.RemoveAt(captI);
                         ResizeToContent();
-                        EditorGUILayout.EndVertical();
-                        break;
+                        removed = true;
                     }
                 }
 
-                _operations[i] = op;
+                if (removed) { EditorGUILayout.EndVertical(); break; }
+
+                // ── Per-operation conditions ──────────────────────────────────
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.LabelField($"Conditions ({op.Conditions.Count})", EditorStyles.miniLabel);
+                    EditorGUI.indentLevel--;
+                    if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(22f)))
+                    {
+                        op.Conditions.Add(new CondRow { Comparison = GameplayTagComparisonOp.Exists, Logic = GameplayTagLogicOp.And });
+                        ResizeToContent();
+                    }
+                }
+                DrawConditionRows(op.Conditions);
+
                 EditorGUILayout.EndVertical();
                 EditorGUILayout.Space(2f);
             }
@@ -442,41 +486,47 @@ namespace Heathen.Ogham.Editor
 
             _item.Conditions.Clear();
             foreach (var c in _conditions)
-            {
-                OghamTagHelper.EnsureRegistered(c.TagName);
-                var cond = new GameplayTagCondition
-                {
-                    Tag          = string.IsNullOrWhiteSpace(c.TagName)
-                        ? default : GameplayTag.FromName(c.TagName.Trim()),
-                    Comparison   = c.Comparison,
-                    CompareValue = (ulong)c.Value,
-                    ExactMatch   = c.ExactMatch,
-                    LogicOp      = c.Logic,
-                };
-                if (c.UseCompareTag && OghamTagHelper.IsValidTagPath(c.CompareTagName))
-                {
-                    OghamTagHelper.EnsureRegistered(c.CompareTagName);
-                    cond.CompareTag = GameplayTag.FromName(c.CompareTagName.Trim());
-                }
-                _item.Conditions.Add(cond);
-            }
+                _item.Conditions.Add(BuildCondition(c));
 
             _item.Operations.Clear();
             foreach (var op in _operations)
             {
                 OghamTagHelper.EnsureRegistered(op.TagName);
-                _item.Operations.Add(new GameplayTagOperation
+                var operation = new GameplayTagOperation
                 {
                     Tag        = string.IsNullOrWhiteSpace(op.TagName)
                         ? default : GameplayTag.FromName(op.TagName.Trim()),
                     Arithmetic = op.Arithmetic,
                     Value      = (ulong)op.Value,
-                });
+                };
+                foreach (var c in op.Conditions)
+                    operation.Conditions.Add(BuildCondition(c));
+                _item.Operations.Add(operation);
             }
 
             EditorUtility.SetDirty(_asset);
             _onCommit?.Invoke();
             Close();
+        }
+
+        private static GameplayTagCondition BuildCondition(CondRow c)
+        {
+            OghamTagHelper.EnsureRegistered(c.TagName);
+            var cond = new GameplayTagCondition
+            {
+                Tag          = string.IsNullOrWhiteSpace(c.TagName)
+                    ? default : GameplayTag.FromName(c.TagName.Trim()),
+                Comparison   = c.Comparison,
+                CompareValue = (ulong)c.Value,
+                ExactMatch   = c.ExactMatch,
+                LogicOp      = c.Logic,
+            };
+            if (c.UseCompareTag && OghamTagHelper.IsValidTagPath(c.CompareTagName))
+            {
+                OghamTagHelper.EnsureRegistered(c.CompareTagName);
+                cond.CompareTag = GameplayTag.FromName(c.CompareTagName.Trim());
+            }
+            return cond;
         }
 
         private void Cancel() { _closing = true; Close(); }

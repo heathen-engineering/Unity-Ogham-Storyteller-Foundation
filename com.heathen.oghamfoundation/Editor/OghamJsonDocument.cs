@@ -220,9 +220,12 @@ namespace Heathen.Ogham.Editor
                 if (arith == GameplayTagArithmetic.Set && oo["arithmetic"]?.Value<string>() is { } raw)
                     arith = raw switch { "Sub" => GameplayTagArithmetic.Subtract, "Mul" => GameplayTagArithmetic.Multiply, "Div" => GameplayTagArithmetic.Divide, _ => arith };
 
+                var tagStr = oo["tag"]?.Value<string>() ?? "";
+                var tagVal = HashTag(tagStr);
+                UnityEngine.Debug.Log($"[OghamCompile] tag='{tagStr}' → Id={tagVal.Id} arith={arith} value={oo["value"]?.Value<ulong>() ?? 0UL}");
                 var op = new GameplayTagOperation
                 {
-                    Tag        = HashTag(oo["tag"]?.Value<string>()),
+                    Tag        = tagVal,
                     Arithmetic = arith,
                     Value      = oo["value"]?.Value<ulong>() ?? 0UL,
                 };
