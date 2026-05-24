@@ -22,7 +22,7 @@ namespace Heathen.Ogham
         public const string OghamScheme = "Ogham://";
 
         // [display](tag)  —  group 1 = display, group 2 = tag (may be null/empty)
-        internal static readonly Regex LinkRx = new Regex(
+        public static readonly Regex LinkRx = new Regex(
             @"\[([^\]]*)\](?:\(([^)]*)\))?",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
