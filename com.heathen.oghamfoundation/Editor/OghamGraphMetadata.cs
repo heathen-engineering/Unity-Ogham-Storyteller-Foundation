@@ -64,6 +64,8 @@ namespace Heathen.Ogham.Editor
         public List<OghamNodeMeta> Nodes = new();
         // Canvas view state: x/y = scroll offset, z = zoom scale.
         public Vector3             ViewTransform = new Vector3(0f, 0f, 1f);
+        // Per-asset node header colour (Color.clear = use default rotation).
+        public Color               HeaderColor   = Color.clear;
         // Global label definitions for this asset's graph.
         public List<OghamLabelDef> Labels        = new();
 

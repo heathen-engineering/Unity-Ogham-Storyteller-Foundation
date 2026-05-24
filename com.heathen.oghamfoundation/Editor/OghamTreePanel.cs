@@ -27,6 +27,9 @@ namespace Heathen.Ogham.Editor
         // Optional: resolve the AssetDatabase path for a synthetic (.ogham-backed) asset so clicks can ping the file.
         public System.Func<OghamData, string> PathResolver { get; set; }
 
+        // Optional: returns true when the given asset is the current active target for new nodes.
+        public System.Func<OghamData, bool> IsActiveAsset { get; set; }
+
         // Assets whose nodes should be hidden in the canvas view.
         public readonly HashSet<OghamData> HiddenAssets = new();
 
@@ -135,6 +138,7 @@ namespace Heathen.Ogham.Editor
 
         private VisualElement MakeAssetRow(OghamData asset)
         {
+            bool isActive = IsActiveAsset?.Invoke(asset) == true;
             var row = new VisualElement
             {
                 style = {
@@ -143,7 +147,9 @@ namespace Heathen.Ogham.Editor
                     paddingLeft     = 4f,
                     paddingTop      = 3f,
                     paddingBottom   = 3f,
-                    backgroundColor = new Color(0.22f, 0.22f, 0.22f),
+                    backgroundColor = isActive
+                        ? new Color(0.18f, 0.32f, 0.18f)
+                        : new Color(0.22f, 0.22f, 0.22f),
                 }
             };
 

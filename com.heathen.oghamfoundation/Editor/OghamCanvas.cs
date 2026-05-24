@@ -131,7 +131,7 @@ namespace Heathen.Ogham.Editor
         // ── Tab label deferred rendering ──────────────────────────────────────
         // GUI.Label must not be called inside Handles.BeginGUI/EndGUI — collect labels here
         // and flush them after EndGUI to avoid corrupting the Handles GL state.
-        private readonly List<(Rect rect, string label)> _pendingTabLabels = new();
+        private readonly List<(Rect rect, string label, Color textColor)> _pendingTabLabels = new();
 
         // ── Render cache ──────────────────────────────────────────────────────
         private bool _orderedNodesDirty = true;
@@ -154,6 +154,8 @@ namespace Heathen.Ogham.Editor
         public bool SnapToGrid { get => _snapToGrid; set => _snapToGrid = value; }
         public string SelectedEntryTagPath => _nodes.FirstOrDefault(n => n.IsSelected)?.Entry.TagPath;
         public event System.Action OnGraphChanged;
+        public event System.Action OnSaveRequested;
+        public event System.Action OnActiveAssetChanged;
 
         private readonly EditorWindow _host;
 
@@ -215,7 +217,9 @@ namespace Heathen.Ogham.Editor
             _assets.Add(data);
             _metas.Add(meta);
             if (!_assetColors.ContainsKey(data))
-                _assetColors[data] = HeaderColors[_colorIndex++ % HeaderColors.Length];
+                _assetColors[data] = meta.HeaderColor.a > 0f
+                    ? meta.HeaderColor
+                    : HeaderColors[_colorIndex++ % HeaderColors.Length];
             if (ActiveAsset == null)
             {
                 ActiveAsset = data;
@@ -238,7 +242,9 @@ namespace Heathen.Ogham.Editor
             _assets.Add(data);
             _metas.Add(meta);
             if (!_assetColors.ContainsKey(data))
-                _assetColors[data] = HeaderColors[_colorIndex++ % HeaderColors.Length];
+                _assetColors[data] = meta.HeaderColor.a > 0f
+                    ? meta.HeaderColor
+                    : HeaderColors[_colorIndex++ % HeaderColors.Length];
             if (ActiveAsset == null)
             {
                 ActiveAsset = data;
@@ -271,7 +277,9 @@ namespace Heathen.Ogham.Editor
 
         public void SetActiveAsset(OghamData data)
         {
-            if (data != null && _assets.Contains(data)) ActiveAsset = data;
+            if (data == null || !_assets.Contains(data) || ActiveAsset == data) return;
+            ActiveAsset = data;
+            OnActiveAssetChanged?.Invoke();
         }
 
         public void SetAssetHidden(OghamData data, bool hidden)
@@ -288,6 +296,13 @@ namespace Heathen.Ogham.Editor
         {
             if (data == null) return;
             _assetColors[data] = color;
+            int i = _assets.IndexOf(data);
+            if (i >= 0)
+            {
+                _metas[i].HeaderColor = color;
+                EditorUtility.SetDirty(data);
+                SaveMeta(_metas[i]);
+            }
             RebuildCanvas();
         }
 
@@ -886,8 +901,11 @@ namespace Heathen.Ogham.Editor
             Handles.EndGUI();
 
             // Flush deferred tab-flag labels — must be outside Handles scope to avoid GL state corruption.
-            foreach (var (r, lbl) in _pendingTabLabels)
+            foreach (var (r, lbl, tc) in _pendingTabLabels)
+            {
+                _tabLabelStyle.normal.textColor = tc;
                 GUI.Label(r, lbl, _tabLabelStyle);
+            }
 
             // Layer 2: node bodies + interactive controls (frustum-culled).
             foreach (var node in _orderedNodes)
@@ -932,6 +950,13 @@ namespace Heathen.Ogham.Editor
                 Undo.PerformUndo();
                 e.Use();
                 _host?.Repaint();
+                return;
+            }
+
+            if (e.type == EventType.KeyDown && e.keyCode == KeyCode.S && e.control)
+            {
+                OnSaveRequested?.Invoke();
+                e.Use();
                 return;
             }
 
@@ -1198,6 +1223,11 @@ namespace Heathen.Ogham.Editor
                             _connSrcOpt     = node.Entry.Options[i];
                             _connSrcOptIdx  = i;
                             _connDragEnd    = mp;
+                            if (ActiveAsset != node.Asset)
+                            {
+                                ActiveAsset = node.Asset;
+                                OnActiveAssetChanged?.Invoke();
+                            }
                             e.Use(); return;
                         }
                     }
@@ -1540,7 +1570,7 @@ namespace Heathen.Ogham.Editor
                 label = edge.Target != null ? edge.Target.DisplayName : "?";
                 if (label.Length > 4) label = label.Substring(0, 4);
             }
-            _pendingTabLabels.Add((new Rect(left + px, top, w - px, h), label));
+            _pendingTabLabels.Add((new Rect(left + px, top, w - px, h), label, AdaptiveTextColor(fill)));
         }
 
         // ── Alias badge drawing ───────────────────────────────────────────────
@@ -1622,6 +1652,7 @@ namespace Heathen.Ogham.Editor
                     if (lastDot >= 0) headerName = headerName.Substring(lastDot + 1);
                 }
 
+                _headerStyle.normal.textColor = AdaptiveTextColor(node.HeaderColor);
                 GUI.Label(new Rect(lblX, hdrR.y, lblW, hScaled), headerName, _headerStyle);
             }
 
@@ -2299,6 +2330,7 @@ namespace Heathen.Ogham.Editor
             {
                 if (string.IsNullOrWhiteSpace(newPath)) return;
                 var trimmed = newPath.Trim();
+                if (trimmed == current) return;
                 int renameMetaIdx = _assets.IndexOf(node.Asset);
                 Undo.RecordObject(node.Asset, "Rename Entry");
                 if (renameMetaIdx >= 0) Undo.RecordObject(_metas[renameMetaIdx], "Rename Entry");
@@ -2783,6 +2815,12 @@ namespace Heathen.Ogham.Editor
                 normal    = { textColor = Color.white, background = null },
             };
         }
+
+        // Returns dark or light text based on perceived luminance of the background.
+        private static Color AdaptiveTextColor(Color bg)
+            => (0.299f * bg.r + 0.587f * bg.g + 0.114f * bg.b) > 0.55f
+                ? new Color(0.10f, 0.10f, 0.10f)
+                : Color.white;
 
         private static Texture2D MakeTex(Color c)
         {

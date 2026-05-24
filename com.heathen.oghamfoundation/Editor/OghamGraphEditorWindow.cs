@@ -71,10 +71,13 @@ namespace Heathen.Ogham.Editor
             _canvasContainer = new IMGUIContainer(DrawCanvas) { style = { flexGrow = 1f } };
             split.Add(_canvasContainer);
 
-            _canvas.OnGraphChanged += () => _treePanel.Rebuild();
-            _treePanel.NameResolver = _canvas.ResolveEntryName;
-            _treePanel.ColorGetter  = data => _canvas.GetAssetColor(data);
-            _treePanel.ColorSetter  = (data, color) => { _canvas.SetAssetColor(data, color); Repaint(); };
+            _canvas.OnGraphChanged       += () => _treePanel.Rebuild();
+            _canvas.OnSaveRequested      += SaveOghamFiles;
+            _canvas.OnActiveAssetChanged += _treePanel.Rebuild;
+            _treePanel.NameResolver    = _canvas.ResolveEntryName;
+            _treePanel.ColorGetter     = data => _canvas.GetAssetColor(data);
+            _treePanel.ColorSetter     = (data, color) => { _canvas.SetAssetColor(data, color); Repaint(); };
+            _treePanel.IsActiveAsset   = data => _canvas.ActiveAsset == data;
 
             // Persist split position across window sessions.
             _treePanel.RegisterCallback<GeometryChangedEvent>(_ =>
@@ -133,6 +136,12 @@ namespace Heathen.Ogham.Editor
         private void OnDisable()
         {
             EditorApplication.projectChanged -= OnProjectChanged;
+
+            if (_canvas != null)
+            {
+                _canvas.OnSaveRequested      -= SaveOghamFiles;
+                _canvas.OnActiveAssetChanged -= _treePanel.Rebuild;
+            }
 
             if (_treePanel != null)
             {

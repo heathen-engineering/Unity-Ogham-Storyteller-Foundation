@@ -132,6 +132,9 @@ namespace Heathen.Ogham.Editor
                             Color = ParseColor(lo["color"]?.Value<string>(), Color.white),
                         });
 
+            if (editor["headerColor"] is JToken hcToken)
+                meta.HeaderColor = ParseColor(hcToken.Value<string>(), Color.clear);
+
             if (editor["nodes"] is JArray nodes)
                 foreach (var n in nodes)
                     if (n is JObject no)
@@ -530,6 +533,9 @@ namespace Heathen.Ogham.Editor
                     meta.ViewTransform.x, meta.ViewTransform.y, meta.ViewTransform.z
                 },
             };
+
+            if (meta.HeaderColor.a > 0f)
+                editor["headerColor"] = ToHex(meta.HeaderColor);
 
             if (meta.Labels.Count > 0)
             {

@@ -67,7 +67,7 @@ namespace Heathen.Ogham.Editor
 
         private void OnLostFocus()
         {
-            if (!_closing) Commit();
+            if (!_closing) Cancel();
         }
 
         private void Commit()
