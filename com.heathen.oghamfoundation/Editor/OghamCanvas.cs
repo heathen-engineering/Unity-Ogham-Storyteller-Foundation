@@ -934,6 +934,21 @@ namespace Heathen.Ogham.Editor
                 EditorGUI.DrawRect(new Rect(rbr.xMax - 1f, rbr.y,        1f, rbr.height), border);
             }
 
+            // Layer 5: hovered tab flag — drawn above all nodes and pins so the expanded
+            // label is always fully legible regardless of what nodes are beneath it.
+            if (_hoveredTabEdge != null)
+            {
+                _pendingTabLabels.Clear();
+                Handles.BeginGUI();
+                DrawTabFlag(_hoveredTabEdge, _hoveredTabEdge.OptionIndex, true);
+                Handles.EndGUI();
+                foreach (var (r, lbl, tc) in _pendingTabLabels)
+                {
+                    _tabLabelStyle.normal.textColor = tc;
+                    GUI.Label(r, lbl, _tabLabelStyle);
+                }
+            }
+
             GUI.EndClip();
         }
 
@@ -1419,7 +1434,8 @@ namespace Heathen.Ogham.Editor
 
                 if (IsTabMode(edge))
                 {
-                    DrawTabFlag(edge, optIdx, edge == _hoveredTabEdge);
+                    if (edge == _hoveredTabEdge) continue; // drawn on top of all nodes
+                    DrawTabFlag(edge, optIdx, false);
                     continue;
                 }
 
