@@ -32,9 +32,9 @@ namespace Heathen.Ogham
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // Bold before italic to avoid double-asterisk collisions
-        internal static readonly Regex BoldRx   = new Regex(@"\*\*([^*]+)\*\*",
+        public static readonly Regex BoldRx   = new Regex(@"\*\*([^*]+)\*\*",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
-        internal static readonly Regex ItalicRx = new Regex(@"\*([^*]+)\*",
+        public static readonly Regex ItalicRx = new Regex(@"\*([^*]+)\*",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
         private static readonly Regex RichTagRx = new Regex(@"<[^>]+>",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
