@@ -35,6 +35,16 @@ namespace Heathen.Ogham
         // Use this constant instead of the literal string to avoid typos.
         public const string Token = "{%}";
 
+        // Matches already-compiled <link="Ogham://tag">display</link> tags produced by
+        // OghamCompiledData.CompileEntry(). A second pass in Format() re-applies
+        // active/inactive styling so compiled and raw paths behave identically.
+        private static readonly System.Text.RegularExpressions.Regex CompiledLinkRx =
+            new System.Text.RegularExpressions.Regex(
+                @"<link=""(Ogham://[^""]+)"">(.+?)</link>",
+                System.Text.RegularExpressions.RegexOptions.Compiled |
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant |
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+
         // Convert raw authoring text to TMPro markup.
         // Each Ogham:// link is wrapped in <link="Ogham://...">FORMATTED_DISPLAY</link>.
         // The display text is extracted from the authoring syntax, stripped of any existing
@@ -77,6 +87,28 @@ namespace Heathen.Ogham
                     : inactiveFormat;
 
                 // No <link> tag on an unmatched Ogham reference — keeps it unclickable.
+                if (option == null)
+                    return (fmt ?? clean).Replace(Token, clean);
+
+                return $"<link=\"{target}\">{(fmt ?? clean).Replace(Token, clean)}</link>";
+            });
+
+            // Second pass: re-style already-compiled <link="Ogham://...">display</link> tags.
+            // OghamCompiledData.CompileEntry() converts authoring text to plain TMPro links at
+            // bake time; this pass applies the active/inactive format at runtime so both the
+            // compiled and raw-source paths produce identical styled output.
+            text = CompiledLinkRx.Replace(text, m =>
+            {
+                var target  = m.Groups[1].Value;
+                var inner   = m.Groups[2].Value;
+                var tagPath = OghamInlineLinkParser.GetTagPath(target);
+                var tagId   = GameplayTag.FromName(tagPath).Id;
+                var clean   = OghamInlineLinkParser.StripMarkup(inner);
+
+                var fmt = lookup.TryGetValue(tagId, out var option)
+                    ? (option.IsActive ? activeFormat : inactiveFormat)
+                    : inactiveFormat;
+
                 if (option == null)
                     return (fmt ?? clean).Replace(Token, clean);
 
