@@ -77,11 +77,11 @@ namespace Heathen.Ogham.Editor
 
     // Registers tags and localisations from all .ogham files on editor load and after imports.
     [InitializeOnLoad]
-    internal static class OghamImporterRefresh
+    public static class OghamImporterRefresh
     {
         static OghamImporterRefresh() => EditorApplication.delayCall += Refresh;
 
-        internal static void Refresh()
+        public static void Refresh()
         {
             var dataPath = Application.dataPath;
             string[] files;

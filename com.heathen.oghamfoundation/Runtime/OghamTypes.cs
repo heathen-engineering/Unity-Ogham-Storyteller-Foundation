@@ -48,10 +48,10 @@ namespace Heathen.Ogham
 
         // Runtime resolution: prefer stored hash, fall back to hashing the string path.
         // The fallback keeps old authoring assets working until they are re-saved.
-        internal GameplayTag ResolvedTag =>
+        public GameplayTag ResolvedTag =>
             Tag.IsValid ? Tag : GameplayTag.FromName(_tagPath);
 
-        internal GameplayTag ResolvedTargetEntry =>
+        public GameplayTag ResolvedTargetEntry =>
             TargetEntry.IsValid ? TargetEntry :
             string.IsNullOrEmpty(_targetEntryPath) ? default : GameplayTag.FromName(_targetEntryPath);
 
@@ -88,7 +88,7 @@ namespace Heathen.Ogham
         }
 
         // Runtime resolution: prefer stored hash, fall back to hashing the string path.
-        internal GameplayTag ResolvedTag =>
+        public GameplayTag ResolvedTag =>
             Tag.IsValid ? Tag : GameplayTag.FromName(_tagPath);
 
         // Multi-role content: narrator, speaker, body, title, images, audio, prefabs, etc.

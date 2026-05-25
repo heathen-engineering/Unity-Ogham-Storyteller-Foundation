@@ -157,6 +157,39 @@ namespace Heathen.Ogham
             return (fmt ?? clean).Replace(Token, clean);
         }
 
+        // ── State variable interpolation ──────────────────────────────────────
+
+        // Substitutes @@TagPath() and @@TagPath(format) tokens with narrative-state values.
+        //
+        // Syntax:
+        //   @@Tag.Path()          → state.GetValue(Tag.Path).ToString()
+        //   @@Tag.Path(0.00'€')   → state.GetValue(Tag.Path).ToString("0.00'€'")
+        //
+        // Parentheses are always required — the '(' terminates the tag path so tokens can
+        // be embedded adjacent to letters or digits without ambiguity (e.g. @@Tag()kg).
+        // The format string is any standard .NET numeric format string. Values are ulong.
+        // Unrecognised tags (not in state) resolve to 0.
+        // Call this before Format() so variables are expanded before link markup runs.
+        public static string InterpolateState(string text, GameplayTagCollection state)
+        {
+            if (string.IsNullOrEmpty(text) || state == null) return text;
+            return StateTokenRx.Replace(text, m =>
+            {
+                var tag    = GameplayTag.FromName(m.Groups[1].Value);
+                var value  = state.GetValue(tag);
+                var format = m.Groups[2].Value;
+                return string.IsNullOrEmpty(format) ? value.ToString() : value.ToString(format);
+            });
+        }
+
+        // @@TagPath(format) — parens always required; tag path is dot-separated identifiers,
+        // format string is everything inside the parentheses (may be empty).
+        private static readonly System.Text.RegularExpressions.Regex StateTokenRx =
+            new System.Text.RegularExpressions.Regex(
+                @"@@([A-Za-z_][A-Za-z0-9_.]*)\(([^)]*)\)",
+                System.Text.RegularExpressions.RegexOptions.Compiled |
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
         // ── Private ───────────────────────────────────────────────────────────
 
         private static Dictionary<ulong, StoryOption> BuildLookup(IReadOnlyList<StoryOption> options)
