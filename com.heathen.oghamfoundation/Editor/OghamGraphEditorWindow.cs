@@ -11,12 +11,12 @@ namespace Heathen.Ogham.Editor
 {
     public class OghamGraphEditorWindow : EditorWindow
     {
-        [MenuItem("Window/Heathen/Ogham Storyteller")]
-        public static void Open() => GetWindow<OghamGraphEditorWindow>("Ogham Storyteller");
+        [MenuItem("Window/Ogham Storyteller")]
+        public static void Open() => GetWindow<OghamGraphEditorWindow>(typeof(SceneView));
 
         public static void OpenAsset(OghamData data)
         {
-            var w = GetWindow<OghamGraphEditorWindow>("Ogham Storyteller");
+            var w = GetWindow<OghamGraphEditorWindow>(typeof(SceneView));
             w.LoadAsset(data);
         }
 
@@ -24,7 +24,7 @@ namespace Heathen.Ogham.Editor
         // and from LoadAllAssets when the window opens.
         public static void OpenOghamFile(string assetPath)
         {
-            var w = GetWindow<OghamGraphEditorWindow>("Ogham Storyteller");
+            var w = GetWindow<OghamGraphEditorWindow>(typeof(SceneView));
             w.LoadOghamFile(assetPath);
         }
 
@@ -129,6 +129,8 @@ namespace Heathen.Ogham.Editor
 
         private void OnEnable()
         {
+            var icon = EditorGUIUtility.IconContent("d_console.infoicon").image;
+            titleContent = new GUIContent("Ogham Storyteller", icon);
             wantsMouseMove = true;
             foreach (var asset in _openAssets)
                 if (asset != null) _canvas?.LoadAsset(asset);

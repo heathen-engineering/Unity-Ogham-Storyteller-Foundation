@@ -241,6 +241,7 @@ namespace Heathen.Ogham.Editor
             for (int i = 0; i < _current.ContentCount; i++)
             {
                 var text = _current.GetText(i) ?? _current.GetRawKey(i) ?? "";
+                text = OghamLinkFormatter.InterpolateState(text, _story.NarrativeState);
                 if (!string.IsNullOrEmpty(text))
                     DrawFormattedContent(text);
             }
@@ -373,7 +374,7 @@ namespace Heathen.Ogham.Editor
             GUILayout.Space(2f);
             foreach (var opt in remaining)
             {
-                var label = opt.GetText();
+                var label = OghamLinkFormatter.InterpolateState(opt.GetText(), _story.NarrativeState);
                 if (string.IsNullOrEmpty(label))
                     label = opt.Tag.IsValid ? ResolveTagName(opt.Tag.Id) : "Option";
 

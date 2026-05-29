@@ -1,122 +1,111 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
-using UnityEngine;
 using Heathen.GameplayTags;
 
 namespace Heathen.Ogham.Editor
 {
     internal static class OghamTagHelper
     {
-        // Returns the friendly name for a tag ID.
-        // Checks in-memory registry first, then scans all GameplayTagsData assets as fallback.
+        // Returns the friendly name for a tag ID from the live registry.
         public static string GetTagName(ulong id)
         {
             if (id == 0) return "";
-            var name = GameplayTagRegistry.GetName(id);
-            if (name != null) return name;
-            foreach (var tag in ScanAllTagAssets())
-                if (!string.IsNullOrEmpty(tag) && GameplayTag.FromName(tag).Id == id) return tag;
-            return "";
+            return GameplayTagRegistry.GetName(id) ?? "";
         }
 
-        // All known tag names: registry union all GameplayTagsData assets, alphabetically sorted.
+        // All registered tag names, alphabetically sorted.
         public static List<string> GetAllTagNames()
         {
-            var registered = GameplayTagRegistry.GetAllNames();
-            var set = registered != null
-                ? new HashSet<string>(registered)
-                : new HashSet<string>();
-            foreach (var tag in ScanAllTagAssets())
-                set.Add(tag);
-            return set.OrderBy(t => t).ToList();
+            var names = GameplayTagRegistry.GetAllNames();
+            return names != null
+                ? names.OrderBy(t => t).ToList()
+                : new List<string>();
         }
 
-        // Ensures tagName is present in a GameplayTagsData asset and in the live registry.
+        // Ensures tagName is present in a .gptags source file and registered in the live registry.
         // Safe to call with null/empty — returns immediately.
         public static void EnsureRegistered(string tagName)
         {
             if (string.IsNullOrWhiteSpace(tagName)) return;
             var trimmed = tagName.Trim();
             var id = GameplayTag.FromName(trimmed).Id;
-            if (id == 0 || GameplayTagRegistry.GetName(id) != null) return;
+            if (id != 0 && GameplayTagRegistry.GetName(id) != null) return;
 
-            var target = FindOrCreateTagsData();
-            if (target == null) return;  // user cancelled the save dialog
-            if (!target.tags.Contains(trimmed))
-            {
-                target.tags.Add(trimmed);
-                EditorUtility.SetDirty(target);
-                AssetDatabase.SaveAssetIfDirty(target);
-            }
-            GameplayTagRegistry.RegisterDefaults(target);
+            var filePath = FindOrCreateGpTagsFile();
+            if (string.IsNullOrEmpty(filePath)) return;
+
+            var (tags, registered) = ReadGpTagsSource(filePath);
+            if (tags.Contains(trimmed)) return;
+            tags.Add(trimmed);
+            WriteGpTagsFile(filePath, tags, registered);
         }
 
-        // Returns true when s is a valid dot-path tag name: non-empty, segments of alphanumeric
-        // characters only, no leading/trailing dots, no consecutive dots.
-        public static bool IsValidTagPath(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return false;
-            if (s[0] == '.' || s[s.Length - 1] == '.') return false;
-            for (int i = 0; i < s.Length; i++)
-            {
-                char c = s[i];
-                if (!char.IsLetterOrDigit(c) && c != '.') return false;
-                if (c == '.' && i + 1 < s.Length && s[i + 1] == '.') return false;
-            }
-            return true;
-        }
+        public static bool IsValidTagPath(string s) => GameplayTagRegistry.ValidateTag(s);
 
-        // Shows a GenericMenu of all known tags; calls onPick(name) when the user selects one.
+        // Shows a GenericMenu of all registered tags; calls onPick(name) on selection.
         public static void ShowTagPicker(System.Action<string> onPick)
         {
             var names = GetAllTagNames();
             if (names.Count == 0)
             {
-                EditorUtility.DisplayDialog("Gameplay Tags", "No tags found. Add tags via a GameplayTagsData asset.", "OK");
+                EditorUtility.DisplayDialog("Gameplay Tags",
+                    "No tags registered. Add tags via Project Settings > Gameplay Tags.", "OK");
                 return;
             }
-            var menu = new GenericMenu();
+            var menu = new UnityEditor.GenericMenu();
             foreach (var n in names)
             {
                 var captured = n;
-                menu.AddItem(new GUIContent(captured), false, () => onPick(captured));
+                menu.AddItem(new UnityEngine.GUIContent(captured), false, () => onPick(captured));
             }
             menu.ShowAsContext();
         }
 
-        private static IEnumerable<string> ScanAllTagAssets()
+        // Finds the first .gptags file in the project, or prompts the user to create one.
+        private static string FindOrCreateGpTagsFile()
         {
-            var guids = AssetDatabase.FindAssets("t:GameplayTagsData");
+            var guids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
             foreach (var guid in guids)
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
-                var data = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
-                if (data == null) continue;
-                foreach (var tag in data.tags)
-                    if (!string.IsNullOrWhiteSpace(tag)) yield return tag;
+                if (path.EndsWith(".gptags", System.StringComparison.OrdinalIgnoreCase))
+                    return path;
             }
+
+            var savePath = EditorUtility.SaveFilePanelInProject(
+                "Create Tag Source", "TagSource", "gptags",
+                "No .gptags file found. Choose where to create one.");
+            if (string.IsNullOrEmpty(savePath)) return null;
+
+            var root = new JObject { ["registered"] = true, ["tags"] = new JArray() };
+            File.WriteAllText(savePath, root.ToString(Newtonsoft.Json.Formatting.Indented));
+            AssetDatabase.ImportAsset(savePath);
+            return savePath;
         }
 
-        private static GameplayTagsData FindOrCreateTagsData()
+        private static (List<string> tags, bool registered) ReadGpTagsSource(string assetPath)
         {
-            var guids = AssetDatabase.FindAssets("t:GameplayTagsData");
-            foreach (var guid in guids)
+            try
             {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                var data = AssetDatabase.LoadAssetAtPath<GameplayTagsData>(path);
-                if (data != null && data.autoRegister) return data;
+                var root = JObject.Parse(File.ReadAllText(assetPath));
+                return (root["tags"]?.ToObject<List<string>>() ?? new List<string>(),
+                        root["registered"]?.Value<bool>() ?? true);
             }
-            var savePath = EditorUtility.SaveFilePanelInProject(
-                "Create Gameplay Tags Data",
-                "GameplayTagsData", "asset",
-                "Choose where to save the new GameplayTagsData asset.",
-                "Assets");
-            if (string.IsNullOrEmpty(savePath)) return null;
-            var created = ScriptableObject.CreateInstance<GameplayTagsData>();
-            AssetDatabase.CreateAsset(created, savePath);
-            AssetDatabase.SaveAssets();
-            return created;
+            catch { return (new List<string>(), true); }
+        }
+
+        private static void WriteGpTagsFile(string assetPath, List<string> tags, bool registered)
+        {
+            var root = new JObject
+            {
+                ["registered"] = registered,
+                ["tags"]       = JArray.FromObject(tags)
+            };
+            File.WriteAllText(assetPath, root.ToString(Newtonsoft.Json.Formatting.Indented));
+            AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
         }
     }
 }
