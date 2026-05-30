@@ -11,11 +11,15 @@ namespace Heathen.Ogham.Editor
     //
     // Layout:
     //   [ TagPath text field                        ][ ▾ picker ]
-    //   [ Operation ▼ ][ Value                                  ]
+    //   [ Operation ▼ ][ type ][ Value / tag field  ][ ▾ picker ]
     //   Conditions (N)                                         [+]
     //   ┌──────────────────────────────────────────────────────┐
     //   │ [ TagPath ][ ▾ ]                                     │
-    //   │ [ ⊞ exact ][ Compare ▼ ][ Value              ][ - ] │
+    //   │ [ ⊞ exact ][ Compare ▼ ][ type ][ Value/tag ][ ▲▼− ]│
+    //   └──────────────────────────────────────────────────────┘
+    //   [ And/Or/Xor ▼ ]
+    //   ┌──────────────────────────────────────────────────────┐
+    //   │ ...next condition...                                 │
     //   └──────────────────────────────────────────────────────┘
     //   [ Save ][ Cancel ]
     public class OghamOperationEditWindow : EditorWindow
@@ -24,35 +28,55 @@ namespace Heathen.Ogham.Editor
         private OghamData             _asset;
         private Action                _onCommit;
 
+        // Operation fields
         private string                _tagName;
         private GameplayTagArithmetic _arithmetic;
-        private long                  _value;
-        private readonly List<CondRow> _conditions = new();
+        private GameplayTagValueType  _valueType;
+        private long                  _value;        // Unsigned (clamped ≥ 0) or Signed
+        private double                _dValue;       // Decimal
+        private string                _valueTagName; // Tag
 
+        private readonly List<CondRow> _conditions = new();
         private bool    _closing;
         private Vector2 _anchor;
 
-        private const float W    = 380f;
-        private const float MaxH = 500f;
-        private const float Row  = 20f;   // singleLineHeight + spacing
-        private const float PickW = 26f;
-        private const float OpW   = 110f;
-        private const float ValW  = 90f;
-        private const float ExW   = 22f;   // exact-match toggle width
+        private const float W     = 380f;
+        private const float MaxH  = 500f;
+        private const float Row   = 20f;
+        private const float LogicH = Row;  // height of the logic-op connector row between conditions
+        private const float PickW  = 26f;
+        private const float OpW    = 110f;
+        private const float TypeW  = 30f;
+        private const float ValW   = 70f;
+        private const float ExW    = 22f;
+        private const float ReordW = 18f;  // ▲ / ▼ button width
 
-        // Condition block: helpBox overhead + tag row + fields row + inner spacing + trailing Space(2)
-        private const float CondH = 8f + Row * 2f + 4f + 2f;
+        // Condition block: helpBox overhead + tag row + fields row + inner spacing
+        private const float CondH = 8f + Row * 2f + 4f;
+
+        private static readonly string[] s_TypeLabels = { "#", "+/-", "0.0", "T" };
+        private static readonly string[] s_TypeTips   = {
+            "Unsigned integer",
+            "Signed integer",
+            "Decimal (double)",
+            "Tag — resolved from collection at runtime",
+        };
 
         private struct CondRow
         {
             public string                  TagName;
             public GameplayTagComparisonOp Comparison;
-            public long                    Value;
+            public long                    Value;         // Unsigned (≥ 0) or Signed
+            public double                  DValue;        // Decimal
             public bool                    ExactMatch;
             public GameplayTagLogicOp      Logic;
-            public bool                    UseCompareTag;
+            public GameplayTagValueType    CompareValueType;
             public string                  CompareTagName;
         }
+
+        // Total rendered height for a block of N condition rows (including logic separators).
+        private static float CondBlockHeight(int count)
+            => count > 0 ? count * CondH + (count - 1) * LogicH : 0f;
 
         public static void Open(GameplayTagOperation item, OghamData asset, Action onRefresh, Vector2 anchor)
         {
@@ -63,21 +87,43 @@ namespace Heathen.Ogham.Editor
             w._onCommit    = onRefresh;
             w._tagName     = item.Tag.IsValid ? OghamTagHelper.GetTagName(item.Tag.Id) : "";
             w._arithmetic  = item.Arithmetic;
-            w._value       = (long)item.Value;
+            w._valueType   = item.ValueType;
             w._anchor      = anchor;
+
+            switch (item.ValueType)
+            {
+                case GameplayTagValueType.Signed:
+                    w._value = (long)item.Value;
+                    break;
+                case GameplayTagValueType.Decimal:
+                    w._dValue = System.BitConverter.Int64BitsToDouble((long)item.Value);
+                    break;
+                case GameplayTagValueType.Tag:
+                    w._value        = 0;
+                    w._valueTagName = item.ValueTag.IsValid ? OghamTagHelper.GetTagName(item.ValueTag.Id) : "";
+                    break;
+                default: // Unsigned
+                    w._value = (long)item.Value;
+                    break;
+            }
 
             w._conditions.Clear();
             foreach (var c in item.Conditions)
+            {
+                var cvt = c.CompareTag.Id != 0 ? GameplayTagValueType.Tag : c.CompareValueType;
                 w._conditions.Add(new CondRow
                 {
-                    TagName        = c.Tag.IsValid ? OghamTagHelper.GetTagName(c.Tag.Id) : "",
-                    Comparison     = c.Comparison,
-                    Value          = (long)c.CompareValue,
-                    ExactMatch     = c.ExactMatch,
-                    Logic          = c.LogicOp,
-                    UseCompareTag  = c.CompareTag.Id != 0,
-                    CompareTagName = c.CompareTag.Id != 0 ? OghamTagHelper.GetTagName(c.CompareTag.Id) : "",
+                    TagName          = c.Tag.IsValid ? OghamTagHelper.GetTagName(c.Tag.Id) : "",
+                    Comparison       = c.Comparison,
+                    Value            = cvt == GameplayTagValueType.Decimal ? 0L : (long)c.CompareValue,
+                    DValue           = cvt == GameplayTagValueType.Decimal
+                                       ? System.BitConverter.Int64BitsToDouble((long)c.CompareValue) : 0.0,
+                    ExactMatch       = c.ExactMatch,
+                    Logic            = c.LogicOp,
+                    CompareValueType = cvt,
+                    CompareTagName   = c.CompareTag.Id != 0 ? OghamTagHelper.GetTagName(c.CompareTag.Id) : "",
                 });
+            }
 
             w._closing = false;
             var h = ComputeHeight(w._conditions.Count);
@@ -90,8 +136,8 @@ namespace Heathen.Ogham.Editor
 
         private static float ComputeHeight(int condCount)
         {
-            // Space(4) + tag row + op+value row + Space(4) + header row + conditions + Space(6) + buttons
-            float h = 4f + Row + Row + 4f + Row + condCount * CondH + 6f + Row + 6f;
+            // Space(4) + tag row + op+value row + Space(4) + header row + cond block + Space(6) + buttons
+            float h = 4f + Row + Row + 4f + Row + CondBlockHeight(condCount) + 6f + Row + 6f;
             return Mathf.Min(h, MaxH);
         }
 
@@ -119,12 +165,46 @@ namespace Heathen.Ogham.Editor
                     OghamTagHelper.ShowTagPicker(s => { _tagName = s; Repaint(); });
             }
 
-            // ── Operation + value row (no labels) ─────────────────────────────
+            // ── Operation + value type + value row ───────────────────────────
             using (new EditorGUILayout.HorizontalScope())
             {
                 _arithmetic = (GameplayTagArithmetic)EditorGUILayout.EnumPopup(_arithmetic, GUILayout.Width(OpW));
-                _value      = EditorGUILayout.LongField(_value, GUILayout.ExpandWidth(true));
-                if (_value < 0) _value = 0;
+
+                if (GUILayout.Button(new GUIContent(s_TypeLabels[(int)_valueType],
+                        s_TypeTips[(int)_valueType]),
+                        EditorStyles.miniButton, GUILayout.Width(TypeW)))
+                {
+                    _valueType = (GameplayTagValueType)(((int)_valueType + 1) % 4);
+                    if (_valueType != GameplayTagValueType.Tag) _valueTagName = "";
+                }
+
+                switch (_valueType)
+                {
+                    case GameplayTagValueType.Signed:
+                        _value = EditorGUILayout.LongField(_value, GUILayout.ExpandWidth(true));
+                        break;
+
+                    case GameplayTagValueType.Decimal:
+                        _dValue = EditorGUILayout.DoubleField(_dValue, GUILayout.ExpandWidth(true));
+                        break;
+
+                    case GameplayTagValueType.Tag:
+                    {
+                        var prevBg = GUI.backgroundColor;
+                        if (!OghamTagHelper.IsValidTagPath(_valueTagName) && !string.IsNullOrEmpty(_valueTagName))
+                            GUI.backgroundColor = Color.red;
+                        _valueTagName = EditorGUILayout.TextField(_valueTagName ?? "", GUILayout.ExpandWidth(true));
+                        GUI.backgroundColor = prevBg;
+                        if (GUILayout.Button("▾", GUILayout.Width(PickW)))
+                            OghamTagHelper.ShowTagPicker(s => { _valueTagName = s; Repaint(); });
+                        break;
+                    }
+
+                    default: // Unsigned
+                        _value = EditorGUILayout.LongField(_value, GUILayout.ExpandWidth(true));
+                        if (_value < 0) _value = 0;
+                        break;
+                }
             }
 
             // ── Conditions header ─────────────────────────────────────────────
@@ -134,7 +214,10 @@ namespace Heathen.Ogham.Editor
                 EditorGUILayout.LabelField($"Conditions ({_conditions.Count})", EditorStyles.boldLabel);
                 if (GUILayout.Button("+", GUILayout.Width(22f)))
                 {
-                    _conditions.Add(new CondRow { Comparison = GameplayTagComparisonOp.Exists, Logic = GameplayTagLogicOp.And });
+                    _conditions.Add(new CondRow {
+                        Comparison = GameplayTagComparisonOp.Exists,
+                        Logic      = GameplayTagLogicOp.And,
+                    });
                     ResizeToContent();
                 }
             }
@@ -142,13 +225,14 @@ namespace Heathen.Ogham.Editor
             // ── Condition rows ────────────────────────────────────────────────
             for (int i = 0; i < _conditions.Count; i++)
             {
-                var c = _conditions[i];
+                var c     = _conditions[i];
+                var captI = i;
+
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
                 // Tag + picker
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    var captI = i;
                     c.TagName = EditorGUILayout.TextField(c.TagName, GUILayout.ExpandWidth(true));
                     if (GUILayout.Button("▾", GUILayout.Width(PickW)))
                         OghamTagHelper.ShowTagPicker(s =>
@@ -157,26 +241,26 @@ namespace Heathen.Ogham.Editor
                         });
                 }
 
-                // Exact match toggle + compare mode + T/# toggle + value/tag + remove button
+                // Exact + comparison + type + value/tag + reorder + remove
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    var captI = i;
                     c.ExactMatch = GUILayout.Toggle(c.ExactMatch, new GUIContent("⊞", "Exact match"),
                         EditorStyles.miniButton, GUILayout.Width(ExW));
                     c.Comparison = (GameplayTagComparisonOp)EditorGUILayout.EnumPopup(c.Comparison,
                         GUILayout.ExpandWidth(true));
 
-                    var newUse = GUILayout.Toggle(c.UseCompareTag,
-                        new GUIContent(c.UseCompareTag ? "T" : "#",
-                            c.UseCompareTag ? "Compare against tag value" : "Compare against constant"),
-                        EditorStyles.miniButton, GUILayout.Width(22f));
-                    if (newUse != c.UseCompareTag) { c.UseCompareTag = newUse; if (!newUse) c.CompareTagName = ""; }
-
-                    if (c.UseCompareTag)
+                    int cvtIdx = (int)c.CompareValueType;
+                    if (GUILayout.Button(new GUIContent(s_TypeLabels[cvtIdx], s_TypeTips[cvtIdx]),
+                            EditorStyles.miniButton, GUILayout.Width(TypeW)))
                     {
-                        var valid  = OghamTagHelper.IsValidTagPath(c.CompareTagName);
+                        c.CompareValueType = (GameplayTagValueType)(((int)c.CompareValueType + 1) % 4);
+                        if (c.CompareValueType != GameplayTagValueType.Tag) c.CompareTagName = "";
+                    }
+
+                    if (c.CompareValueType == GameplayTagValueType.Tag)
+                    {
                         var prevBg = GUI.backgroundColor;
-                        if (!valid && !string.IsNullOrEmpty(c.CompareTagName))
+                        if (!OghamTagHelper.IsValidTagPath(c.CompareTagName) && !string.IsNullOrEmpty(c.CompareTagName))
                             GUI.backgroundColor = Color.red;
                         c.CompareTagName = EditorGUILayout.TextField(c.CompareTagName ?? "", GUILayout.ExpandWidth(true));
                         GUI.backgroundColor = prevBg;
@@ -188,9 +272,42 @@ namespace Heathen.Ogham.Editor
                     }
                     else
                     {
-                        c.Value = EditorGUILayout.LongField(c.Value, GUILayout.Width(ValW));
-                        if (c.Value < 0) c.Value = 0;
+                        switch (c.CompareValueType)
+                        {
+                            case GameplayTagValueType.Signed:
+                                c.Value = EditorGUILayout.LongField(c.Value, GUILayout.Width(ValW));
+                                break;
+                            case GameplayTagValueType.Decimal:
+                                c.DValue = EditorGUILayout.DoubleField(c.DValue, GUILayout.Width(ValW));
+                                break;
+                            default: // Unsigned
+                                c.Value = EditorGUILayout.LongField(c.Value, GUILayout.Width(ValW));
+                                if (c.Value < 0) c.Value = 0;
+                                break;
+                        }
                     }
+
+                    // ▲ / ▼ reorder buttons
+                    var prevEnabled = GUI.enabled;
+                    GUI.enabled = prevEnabled && captI > 0;
+                    if (GUILayout.Button("▲", EditorStyles.miniButtonLeft, GUILayout.Width(ReordW)))
+                    {
+                        GUI.enabled = prevEnabled;
+                        _conditions[captI] = c;
+                        (_conditions[captI], _conditions[captI - 1]) = (_conditions[captI - 1], _conditions[captI]);
+                        EditorGUILayout.EndVertical();
+                        break;
+                    }
+                    GUI.enabled = prevEnabled && captI < _conditions.Count - 1;
+                    if (GUILayout.Button("▼", EditorStyles.miniButtonRight, GUILayout.Width(ReordW)))
+                    {
+                        GUI.enabled = prevEnabled;
+                        _conditions[captI] = c;
+                        (_conditions[captI], _conditions[captI + 1]) = (_conditions[captI + 1], _conditions[captI]);
+                        EditorGUILayout.EndVertical();
+                        break;
+                    }
+                    GUI.enabled = prevEnabled;
 
                     if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22f)))
                     {
@@ -203,7 +320,23 @@ namespace Heathen.Ogham.Editor
 
                 _conditions[i] = c;
                 EditorGUILayout.EndVertical();
-                EditorGUILayout.Space(2f);
+
+                // Logic op connector between conditions
+                if (_conditions.Count > 1 && i < _conditions.Count - 1)
+                {
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        GUILayout.Space(20f);
+                        var cur   = _conditions[i];
+                        cur.Logic = (GameplayTagLogicOp)EditorGUILayout.EnumPopup(cur.Logic, GUILayout.Width(70f));
+                        _conditions[i] = cur;
+                        GUILayout.FlexibleSpace();
+                    }
+                }
+                else
+                {
+                    EditorGUILayout.Space(2f);
+                }
             }
 
             // ── Buttons ───────────────────────────────────────────────────────
@@ -238,7 +371,28 @@ namespace Heathen.Ogham.Editor
                 ? default : GameplayTag.FromName(_tagName.Trim());
 
             _item.Arithmetic = _arithmetic;
-            _item.Value      = (ulong)_value;
+            _item.ValueType  = _valueType;
+            switch (_valueType)
+            {
+                case GameplayTagValueType.Signed:
+                    _item.Value    = (ulong)_value;
+                    _item.ValueTag = default;
+                    break;
+                case GameplayTagValueType.Decimal:
+                    _item.Value    = (ulong)System.BitConverter.DoubleToInt64Bits(_dValue);
+                    _item.ValueTag = default;
+                    break;
+                case GameplayTagValueType.Tag:
+                    _item.Value = 0;
+                    OghamTagHelper.EnsureRegistered(_valueTagName);
+                    _item.ValueTag = string.IsNullOrWhiteSpace(_valueTagName)
+                        ? default : GameplayTag.FromName(_valueTagName.Trim());
+                    break;
+                default: // Unsigned
+                    _item.Value    = (ulong)(_value < 0 ? 0 : _value);
+                    _item.ValueTag = default;
+                    break;
+            }
 
             _item.Conditions.Clear();
             foreach (var c in _conditions)
@@ -246,17 +400,32 @@ namespace Heathen.Ogham.Editor
                 OghamTagHelper.EnsureRegistered(c.TagName);
                 var cond = new GameplayTagCondition
                 {
-                    Tag          = string.IsNullOrWhiteSpace(c.TagName)
+                    Tag              = string.IsNullOrWhiteSpace(c.TagName)
                         ? default : GameplayTag.FromName(c.TagName.Trim()),
-                    Comparison   = c.Comparison,
-                    CompareValue = (ulong)c.Value,
-                    ExactMatch   = c.ExactMatch,
-                    LogicOp      = c.Logic,
+                    Comparison       = c.Comparison,
+                    ExactMatch       = c.ExactMatch,
+                    LogicOp          = c.Logic,
+                    CompareValueType = c.CompareValueType,
                 };
-                if (c.UseCompareTag && OghamTagHelper.IsValidTagPath(c.CompareTagName))
+                switch (c.CompareValueType)
                 {
-                    OghamTagHelper.EnsureRegistered(c.CompareTagName);
-                    cond.CompareTag = GameplayTag.FromName(c.CompareTagName.Trim());
+                    case GameplayTagValueType.Signed:
+                        cond.CompareValue = (ulong)c.Value;
+                        break;
+                    case GameplayTagValueType.Decimal:
+                        cond.CompareValue = (ulong)System.BitConverter.DoubleToInt64Bits(c.DValue);
+                        break;
+                    case GameplayTagValueType.Tag:
+                        cond.CompareValue = 0;
+                        if (OghamTagHelper.IsValidTagPath(c.CompareTagName))
+                        {
+                            OghamTagHelper.EnsureRegistered(c.CompareTagName);
+                            cond.CompareTag = GameplayTag.FromName(c.CompareTagName.Trim());
+                        }
+                        break;
+                    default: // Unsigned
+                        cond.CompareValue = (ulong)(c.Value < 0 ? 0 : c.Value);
+                        break;
                 }
                 _item.Conditions.Add(cond);
             }

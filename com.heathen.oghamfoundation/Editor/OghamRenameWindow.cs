@@ -4,9 +4,8 @@ using UnityEngine;
 
 namespace Heathen.Ogham.Editor
 {
-    // Popup for renaming a tag path. Behaves identically to OghamOptionEditWindow:
-    // anchored near the invoking node, no title bar, commits on Enter or click-away,
-    // cancels on Escape.
+    // Popup for renaming a tag path.
+    // Buttons: [Create] when the tag is new, [Okay] when it already exists, plus [Cancel].
     public class OghamRenameWindow : EditorWindow
     {
         private string         _tagPath;
@@ -15,7 +14,7 @@ namespace Heathen.Ogham.Editor
         private bool           _closing;
 
         private const float W = 320f;
-        private const float H = 44f;
+        private const float H = 74f;  // space + text field + space + button row + padding
 
         public static void Open(string current, Action<string> onCommit, Vector2 anchor)
         {
@@ -63,11 +62,23 @@ namespace Heathen.Ogham.Editor
                 else if (ev.keyCode == KeyCode.Escape)
                     { Cancel(); ev.Use(); }
             }
+
+            EditorGUILayout.Space(4f);
+
+            string trimmed   = _tagPath?.Trim() ?? "";
+            bool   tagExists = !string.IsNullOrEmpty(trimmed) && OghamTagHelper.IsValidTagPath(trimmed);
+            string saveLabel = tagExists ? "Okay" : "Create";
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button(saveLabel)) Commit();
+                if (GUILayout.Button("Cancel"))  Cancel();
+            }
         }
 
         private void OnLostFocus()
         {
-            if (!_closing) Cancel();
+            if (!_closing) Commit();
         }
 
         private void Commit()
