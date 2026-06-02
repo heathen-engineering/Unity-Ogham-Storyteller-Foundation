@@ -2729,17 +2729,17 @@ namespace Heathen.Ogham.Editor
                 }
 
                 menu.AddSeparator("");
+                var notesAnchor = GUIUtility.GUIToScreenPoint(Event.current.mousePosition);
+                int notesMi     = _assets.IndexOf(cap.Asset);
                 menu.AddItem(new GUIContent("Edit Director Notes…"), false, () =>
                 {
-                    var anchor  = GUIUtility.GUIToScreenPoint(Event.current.mousePosition);
-                    int notesMi = _assets.IndexOf(cap.Asset);
                     OghamNotesWindow.Open(cap.Meta.DirectorNotes, newNotes =>
                     {
                         if (notesMi >= 0) Undo.RecordObject(_metas[notesMi], "Edit Director Notes");
                         cap.Meta.DirectorNotes = newNotes ?? "";
                         if (notesMi >= 0) SaveMeta(_metas[notesMi]);
                         _host?.Repaint();
-                    }, anchor);
+                    }, notesAnchor);
                 });
 
                 menu.AddSeparator("");
