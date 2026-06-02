@@ -88,7 +88,9 @@ namespace Heathen.Ogham.Editor
 
         public void PruneOrphans()
         {
-            if (SourceData == null) { Nodes.Clear(); return; }
+            // Synthetic assets (.ogham workflow) never set SourceData — skip rather than
+            // clearing everything; orphaned empty-tag nodes from aborted creations are harmless.
+            if (SourceData == null) return;
             var validNames = new HashSet<string>();
             foreach (var e in SourceData.Entries)
                 if (!string.IsNullOrEmpty(e.TagPath)) validNames.Add(e.TagPath);

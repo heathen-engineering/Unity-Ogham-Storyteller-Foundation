@@ -428,6 +428,7 @@ namespace Heathen.Ogham.Editor
             _editorField = new TextField { multiline = true };
             _editorField.style.flexGrow   = 1f;
             _editorField.style.flexShrink = 0f;   // grow with content, don't collapse
+            _editorField.style.minHeight  = RowH * 5f; // always tall enough to click into
             _editorField.style.whiteSpace = WhiteSpace.Normal;
             _editorField.selectAllOnFocus   = false;
             _editorField.selectAllOnMouseUp = false;
@@ -444,12 +445,22 @@ namespace Heathen.Ogham.Editor
                     sv.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
                 }).StartingIn(50);
 
-                // Default: Formatted mode — show the TMPro preview, read-only.
-                _suppressUndo = true;
-                _editorField.SetValueWithoutNotify(OghamInlineLinkParser.ToTMProMarkup(_editValue));
-                _suppressUndo = false;
-                _editorField.isReadOnly = true;
-                SetEditorRichText(true);
+                if (string.IsNullOrEmpty(_editValue))
+                {
+                    // Empty key: open in Source mode so the cursor is immediately visible.
+                    _editorField.isReadOnly = false;
+                    SetEditorRichText(false);
+                    if (_sourceBtn != null) _sourceBtn.text = "Formatted";
+                }
+                else
+                {
+                    // Non-empty key: Formatted mode — show the TMPro preview, read-only.
+                    _suppressUndo = true;
+                    _editorField.SetValueWithoutNotify(OghamInlineLinkParser.ToTMProMarkup(_editValue));
+                    _suppressUndo = false;
+                    _editorField.isReadOnly = true;
+                    SetEditorRichText(true);
+                }
             });
 
             editorScroll.Add(_editorField);
@@ -1059,9 +1070,26 @@ namespace Heathen.Ogham.Editor
         private void OnLostFocus()
         {
             if (_closing) return;
-            var fw = EditorWindow.focusedWindow;
-            if (fw != null && fw.GetType().Name.Contains("Color")) return;
-            Commit();
+            // Defer by one frame: the color picker (and other auxiliary windows) claim focus
+            // AFTER this event fires, so an immediate focusedWindow check always misses them.
+            EditorApplication.delayCall += () =>
+            {
+                if (_closing || this == null) return;
+                var fw = EditorWindow.focusedWindow;
+                if (fw == this) return;   // we regained focus
+                if (fw != null)
+                {
+                    var n = fw.GetType().Name;
+                    // Covers: ColorPicker, GradientEditor, ObjectPickerWindow,
+                    // ObjectSelectorWindow, ObjectSelector, any modal Popup.
+                    if (n.Contains("Color")    || n.Contains("Gradient") ||
+                        n.Contains("Picker")   || n.Contains("Selector") ||
+                        n.Contains("Popup")    || n.Contains("Browser")  ||
+                        n.Contains("Inspector"))
+                        return;
+                }
+                Commit();
+            };
         }
 
         private void Commit()
@@ -1070,7 +1098,9 @@ namespace Heathen.Ogham.Editor
             _closing         = true;
             _item.Type       = _editType;
             _item.Mode       = _editMode;
-            _item.KeyOrValue = IsText && _editMode == LexiconLocMode.Localised ? _editKey : _editValue;
+            _item.KeyOrValue = !IsText && _editMode == LexiconLocMode.Literal && _editAsset != null
+                ? _editAsset.name
+                : IsText && _editMode == LexiconLocMode.Localised ? _editKey : _editValue;
             _item.AssetRef   = _editAsset;
             _item.InvalidateHash();
 

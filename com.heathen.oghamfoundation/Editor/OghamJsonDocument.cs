@@ -52,7 +52,7 @@ namespace Heathen.Ogham.Editor
     //     "nodes": [{"tag":"...","position":[x,y,w,h],"label":"","labelColor":"#FFFFFF",...}]
     //   }
     // }
-    internal class OghamJsonDocument
+    public class OghamJsonDocument
     {
         private JObject _root;
 
@@ -194,12 +194,27 @@ namespace Heathen.Ogham.Editor
                     if (k is not JObject ko) continue;
                     Enum.TryParse<OghamContentType>(ko["type"]?.Value<string>() ?? "Text", true, out var type);
                     Enum.TryParse<LexiconLocMode>(  ko["mode"]?.Value<string>() ?? "Literal", true, out var mode);
-                    keys.Add(new OghamContentKey
+                    var contentKey = new OghamContentKey
                     {
                         Type       = type,
                         Mode       = mode,
                         KeyOrValue = ko["key"]?.Value<string>() ?? string.Empty,
-                    });
+                    };
+                    if (type != OghamContentType.Text && mode == LexiconLocMode.Literal)
+                    {
+                        var guidStr = ko["assetGuid"]?.Value<string>();
+                        if (!string.IsNullOrEmpty(guidStr))
+                        {
+                            var assetPath = AssetDatabase.GUIDToAssetPath(guidStr);
+                            if (!string.IsNullOrEmpty(assetPath))
+                            {
+                                contentKey.AssetRef = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                                if (contentKey.AssetRef != null && string.IsNullOrEmpty(contentKey.KeyOrValue))
+                                    contentKey.KeyOrValue = contentKey.AssetRef.name;
+                            }
+                        }
+                    }
+                    keys.Add(contentKey);
                 }
                 return;
             }
@@ -459,6 +474,12 @@ namespace Heathen.Ogham.Editor
                             ["mode"] = k.Mode.ToString(),
                             ["key"]  = k.KeyOrValue,
                         };
+                        if (k.Type != OghamContentType.Text && k.Mode == LexiconLocMode.Literal && k.AssetRef != null)
+                        {
+                            var guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(k.AssetRef));
+                            if (!string.IsNullOrEmpty(guid))
+                                ko["assetGuid"] = guid;
+                        }
                         ck.Add(ko);
                     }
                     eo["contentKeys"] = ck;

@@ -179,7 +179,28 @@ namespace Heathen.Ogham.Editor
         {
             if (data == null || !_openAssets.Contains(data)) return;
             _canvas?.RebuildCanvas();
+
             _canvas?.AutoLayoutAsset(data);
+            _treePanel?.Rebuild();
+        }
+
+        // Reload a .ogham file that may already be open, then auto-layout the new nodes.
+        // Called by OghamTweeImportWindow after writing imported content to the file.
+        public void RefreshOghamFile(string assetPath)
+        {
+            // If the file is currently open, close and destroy it first.
+            var existing = _jsonBacked.FirstOrDefault(kv => kv.Value.Path == assetPath);
+            if (existing.Key != null)
+                HandleAssetClosed(existing.Key);
+
+            // Re-open from the freshly written file.
+            LoadOghamFile(assetPath);
+
+            // Auto-layout the newly imported nodes.
+            var newEntry = _jsonBacked.FirstOrDefault(kv => kv.Value.Path == assetPath);
+            if (newEntry.Key != null)
+                _canvas?.AutoLayoutAsset(newEntry.Key);
+
             _treePanel?.Rebuild();
         }
 

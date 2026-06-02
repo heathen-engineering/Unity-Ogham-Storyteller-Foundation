@@ -735,6 +735,14 @@ namespace Heathen.Ogham.Editor
         public void RebuildCanvas()
         {
             _storytellerMeta = null; // refresh on next access so label changes take effect
+
+            // Snapshot live node positions before clearing — used below to recover any
+            // positions that the meta loses due to Unity's undo/asset-pipeline activity.
+            var posSnapshot = new Dictionary<string, Rect>(_nodes.Count);
+            foreach (var cn in _nodes)
+                if (!string.IsNullOrEmpty(cn.Entry.TagPath))
+                    posSnapshot[cn.Entry.TagPath] = cn.Rect;
+
             _dragWpEdge = null; _dragWpIdx = -1; _isDraggingWp = false;
             _dragAlias = null; _isDraggingAlias = false;
             _isRubberBanding = false;
@@ -753,7 +761,14 @@ namespace Heathen.Ogham.Editor
                 {
                     var nm = meta.GetOrCreateNode(entry.TagPath);
                     if (nm.Position.width < 10f)
-                        nm.Position = new Rect(Random.Range(40f, 500f), Random.Range(40f, 360f), NodeW, 200f);
+                    {
+                        // Try to recover from snapshot before falling back to a random position.
+                        if (!string.IsNullOrEmpty(entry.TagPath) &&
+                            posSnapshot.TryGetValue(entry.TagPath, out var saved))
+                            nm.Position = saved;
+                        else
+                            nm.Position = new Rect(Random.Range(40f, 500f), Random.Range(40f, 360f), NodeW, 200f);
+                    }
 
                     var name = ResolveDisplayName(entry, nm);
                     nm.Position = new Rect(nm.Position.x, nm.Position.y, NodeW, NodeHeight(entry, nm));
@@ -1378,7 +1393,7 @@ namespace Heathen.Ogham.Editor
 
         // ── Connections ───────────────────────────────────────────────────────
 
-        private static readonly string[] s_SectionTitles = { "On Enter", "Keys", "Options" };
+        private static readonly string[] s_SectionTitles = { "On Enter", "Fields", "Options" };
 
         // Builds all string caches for a node. Call whenever entry data (items, labels) changes.
         // During Draw(), these cached strings are used directly — no per-frame allocations.
@@ -1785,7 +1800,7 @@ namespace Heathen.Ogham.Editor
             y = DrawSection(node, sr.x + 1f, y, sw, "On Enter",
                 node.Entry.EntryOperations.Count, ref node.Meta.OpsExpanded, 0);
             if (!isForkNode)
-                y = DrawSection(node, sr.x + 1f, y, sw, "Keys",
+                y = DrawSection(node, sr.x + 1f, y, sw, "Fields",
                     node.Entry.ContentKeys.Count, ref node.Meta.FieldsExpanded, 1);
             DrawSection(node, sr.x + 1f, y, sw,
                 isForkNode ? "Routes" : "Options",
