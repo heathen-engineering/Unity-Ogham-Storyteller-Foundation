@@ -31,6 +31,8 @@ namespace Heathen.Ogham.Editor
         // Highlight and label annotations.
         public Color     HighlightColor   = Color.clear;
         public List<int> AssignedLabelIds = new();
+        // VO export metadata — editor only, not compiled into runtime assets.
+        public string    DirectorNotes    = string.Empty;
     }
 
     [Serializable]

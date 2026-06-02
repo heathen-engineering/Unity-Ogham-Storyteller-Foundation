@@ -67,6 +67,12 @@ namespace Heathen.Ogham
         public string InlineLinkSourceKeyPath    = string.Empty;
     }
 
+    public enum OghamNodeMode
+    {
+        Content,  // standard node: displays content, waits for a player option selection
+        Fork,     // silent routing node: evaluates routes automatically, fires no OnEntered
+    }
+
     [Serializable]
     public class DialogueEntry
     {
@@ -90,6 +96,8 @@ namespace Heathen.Ogham
         // Runtime resolution: prefer stored hash, fall back to hashing the string path.
         public GameplayTag ResolvedTag =>
             Tag.IsValid ? Tag : GameplayTag.FromName(_tagPath);
+
+        public OghamNodeMode Mode = OghamNodeMode.Content;
 
         // Multi-role content: narrator, speaker, body, title, images, audio, prefabs, etc.
         public List<OghamContentKey> ContentKeys = new();

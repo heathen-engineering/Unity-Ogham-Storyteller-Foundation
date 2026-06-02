@@ -337,10 +337,34 @@ namespace Heathen.Ogham
             foreach (var op in entry.EntryOperations)
                 op.Apply(_state);
 
-            var (active, all) = BuildOptions(entry);
-            _currentOptions    = active;
-            _currentAllOptions = all;
-            _currentNode       = new StoryNode(entry, active, all);
+            if (entry.Mode == OghamNodeMode.Fork)
+            {
+                // Fork nodes route silently: evaluate routes, pick the first passing one.
+                // No OnEntered event. No history entry. Player never sees this node.
+                var (active, _) = BuildOptions(entry);
+                var route = active.Count > 0 ? active[0] : null;
+                if (route == null) { CloseInternal(interrupted: false); return; }
+
+                foreach (var op in route.RawOption.Operations)
+                    op.Apply(_state);
+
+                var dest = route.RawOption.ResolvedTargetEntry;
+                if (dest.Id == 0)
+                {
+                    CloseInternal(interrupted: false);
+                    return;
+                }
+                var target = FindEntryInternal(dest.Id);
+                if (target == null) { CloseInternal(interrupted: false); return; }
+                _currentEntryId = dest.Id;
+                EnterEntry(target);
+                return;
+            }
+
+            var (activeOpts, allOpts) = BuildOptions(entry);
+            _currentOptions    = activeOpts;
+            _currentAllOptions = allOpts;
+            _currentNode       = new StoryNode(entry, activeOpts, allOpts);
             OnEntered?.Invoke(Id, _currentNode);
         }
 

@@ -388,6 +388,9 @@ namespace Heathen.Ogham.Editor
                 if (GUILayout.Button("Import…",    EditorStyles.toolbarButton, GUILayout.Width(64)))
                     ShowImportMenu();
 
+                if (GUILayout.Button("Export…",    EditorStyles.toolbarButton, GUILayout.Width(64)))
+                    ShowExportWindow();
+
                 if (GUILayout.Button(new GUIContent("⚙", "Open Ogham Editor Settings in Inspector"),
                     EditorStyles.toolbarButton, GUILayout.Width(26)))
                 {
@@ -422,6 +425,29 @@ namespace Heathen.Ogham.Editor
                 menu.AddItem(new GUIContent(cap.DisplayName), false, () => cap.Open());
             }
             menu.ShowAsContext();
+        }
+
+        // ── Export ────────────────────────────────────────────────────────────
+
+        private void ShowExportWindow()
+        {
+            if (_openAssets.Count == 0)
+            {
+                EditorUtility.DisplayDialog("Export VO Script",
+                    "No story assets are open. Open a story in the graph editor first.", "OK");
+                return;
+            }
+
+            var metas = _openAssets
+                .Select(a => _canvas.GetMeta(a))
+                .ToList();
+
+            var selectedTag  = _canvas.SelectedEntryTagPath;
+            var selectedTags = string.IsNullOrEmpty(selectedTag)
+                ? Enumerable.Empty<string>()
+                : Enumerable.Repeat(selectedTag, 1);
+
+            OghamExportWindow.Open(_openAssets, metas, selectedTags);
         }
 
         // ── New file ──────────────────────────────────────────────────────────

@@ -133,6 +133,19 @@ namespace Heathen.Ogham.Editor
         // and flush them after EndGUI to avoid corrupting the Handles GL state.
         private readonly List<(Rect rect, string label, Color textColor)> _pendingTabLabels = new();
 
+        // ── Storyteller metadata (VO export labels) ───────────────────────────
+        private OghamStorytellerMetadata _storytellerMeta;
+
+        private OghamStorytellerMetadata StorytellerMeta
+        {
+            get
+            {
+                if (_storytellerMeta == null)
+                    _storytellerMeta = OghamStorytellerMetadata.GetOrCreate();
+                return _storytellerMeta;
+            }
+        }
+
         // ── Render cache ──────────────────────────────────────────────────────
         private bool _orderedNodesDirty = true;
         private readonly List<CanvasNode> _orderedNodes = new();
@@ -721,6 +734,7 @@ namespace Heathen.Ogham.Editor
 
         public void RebuildCanvas()
         {
+            _storytellerMeta = null; // refresh on next access so label changes take effect
             _dragWpEdge = null; _dragWpIdx = -1; _isDraggingWp = false;
             _dragAlias = null; _isDraggingAlias = false;
             _isRubberBanding = false;
@@ -818,12 +832,15 @@ namespace Heathen.Ogham.Editor
         {
             float h = HeaderH + MetaH + 4f;
             if (nm.AssignedLabelIds.Count > 0) h += LabelStripH;
-            h += SectionHdrH;
+            h += SectionHdrH; // On Enter
             if (nm.OpsExpanded) h += entry.EntryOperations.Count * RowH;
-            h += SectionHdrH;
-            if (nm.FieldsExpanded)
-                foreach (var key in entry.ContentKeys) h += TextKeyHEstimate(key);
-            h += SectionHdrH;
+            if (entry.Mode != OghamNodeMode.Fork)
+            {
+                h += SectionHdrH; // Keys
+                if (nm.FieldsExpanded)
+                    foreach (var key in entry.ContentKeys) h += TextKeyHEstimate(key);
+            }
+            h += SectionHdrH; // Options / Routes
             if (nm.ChoicesExpanded) h += entry.Options.Count * RowH;
             h += 4f;
             return h;
@@ -845,18 +862,29 @@ namespace Heathen.Ogham.Editor
             return new Vector2(n.Rect.x + PinR + 4f, n.Rect.y + HeaderH + lblStrip + MetaH * 0.5f);
         }
 
-        // Output pin: inside the right pin-column of each option row
+        // Output pin: inside the right pin-column of each option/route row
         private static Vector2 OutputPinPos(CanvasNode n, int optIdx)
         {
             float lblStrip = n.Meta.AssignedLabelIds.Count > 0 ? LabelStripH : 0f;
             float opsRows  = n.Meta.OpsExpanded ? n.Entry.EntryOperations.Count : 0;
-            float keyH     = 0f;
-            if (n.Meta.FieldsExpanded)
-                foreach (var h in n.KeyHeights) keyH += h;  // use cached heights — no regex per frame
-            float top = n.Rect.y + HeaderH + lblStrip + MetaH + 4f
-                      + SectionHdrH + opsRows * RowH
-                      + SectionHdrH + keyH
-                      + SectionHdrH;
+            float top;
+            if (n.Entry.Mode == OghamNodeMode.Fork)
+            {
+                // Fork: On Enter section + Routes section (no Keys section)
+                top = n.Rect.y + HeaderH + lblStrip + MetaH + 4f
+                    + SectionHdrH + opsRows * RowH
+                    + SectionHdrH;
+            }
+            else
+            {
+                float keyH = 0f;
+                if (n.Meta.FieldsExpanded)
+                    foreach (var h in n.KeyHeights) keyH += h;
+                top = n.Rect.y + HeaderH + lblStrip + MetaH + 4f
+                    + SectionHdrH + opsRows * RowH
+                    + SectionHdrH + keyH
+                    + SectionHdrH;
+            }
             return new Vector2(n.Rect.xMax - PinColW * 0.5f, top + (optIdx + 0.5f) * RowH);
         }
 
@@ -1368,10 +1396,12 @@ namespace Heathen.Ogham.Editor
                 node.Entry.ContentKeys.Count,
                 node.Entry.Options.Count,
             };
+            bool isFork = node.Entry.Mode == OghamNodeMode.Fork;
             for (int s = 0; s < 3; s++)
             {
-                node.SectionHeaders[s, 0] = $"▶ {s_SectionTitles[s]} ({counts[s]})";
-                node.SectionHeaders[s, 1] = $"▼ {s_SectionTitles[s]} ({counts[s]})";
+                string title = (s == 2 && isFork) ? "Routes" : s_SectionTitles[s];
+                node.SectionHeaders[s, 0] = $"▶ {title} ({counts[s]})";
+                node.SectionHeaders[s, 1] = $"▼ {title} ({counts[s]})";
             }
 
             // Row label strings per section.
@@ -1382,8 +1412,13 @@ namespace Heathen.Ogham.Editor
 
             int keyCount = node.Entry.ContentKeys.Count;
             if (node.KeyLabels.Length != keyCount) node.KeyLabels = new string[keyCount];
+            var stMeta = StorytellerMeta;
             for (int i = 0; i < keyCount; i++)
-                node.KeyLabels[i] = KeySummary(node.Entry.ContentKeys[i], i, keyCount);
+            {
+                var summary = KeySummary(node.Entry.ContentKeys[i], i, keyCount);
+                var lbl = stMeta.GetLabel(i);
+                node.KeyLabels[i] = string.IsNullOrEmpty(lbl) ? summary : $"<b>{lbl}</b> | {summary}";
+            }
 
             // Cache row heights — prevents TextKeyHEstimate (regex) from running every frame.
             if (node.KeyHeights.Length != keyCount) node.KeyHeights = new float[keyCount];
@@ -1393,7 +1428,9 @@ namespace Heathen.Ogham.Editor
             int optCount = node.Entry.Options.Count;
             if (node.OptLabels.Length != optCount) node.OptLabels = new string[optCount];
             for (int i = 0; i < optCount; i++)
-                node.OptLabels[i] = OptSummary(node.Entry.Options[i]);
+                node.OptLabels[i] = isFork
+                    ? ForkRouteSummary(node.Entry.Options[i])
+                    : OptSummary(node.Entry.Options[i]);
         }
 
         // Populate connection-cache HashSets used by DrawNodePins so it can skip O(edges) scans.
@@ -1651,13 +1688,34 @@ namespace Heathen.Ogham.Editor
             var hdrR = new Rect(sr.x + 1f, sr.y + 1f, sr.width - 2f, hScaled);
             EditorGUI.DrawRect(hdrR, node.HeaderColor);
 
+            // Fork mode indicator — amber stripe on left edge of header
+            bool isForkNode = node.Entry.Mode == OghamNodeMode.Fork;
+            if (isForkNode)
+                EditorGUI.DrawRect(new Rect(hdrR.x, hdrR.y, 3f, hdrR.height),
+                    new Color(1.0f, 0.72f, 0.15f));
+
             // Header label — abbreviated to last tag segment when header is narrow; hidden below LodLabelZoom.
             if (showLabel)
             {
                 float dotSz   = 8f * _zoom;
                 float dotOffX = 4f * _zoom;
+
+                // Mode toggle button — right side of header (editable asset only)
+                float toggleW  = 24f * _zoom;
+                float toggleH  = (HeaderH - 6f) * _zoom;
+                float toggleX  = hdrR.xMax - toggleW - 3f * _zoom;
+                float toggleY  = hdrR.y + 3f * _zoom;
+                var   toggleR  = new Rect(toggleX, toggleY, toggleW, toggleH);
+                var savedBg    = GUI.backgroundColor;
+                GUI.backgroundColor = isForkNode
+                    ? new Color(1.0f, 0.72f, 0.15f)
+                    : new Color(0.4f, 0.4f, 0.4f);
+                if (GUI.Button(toggleR, isForkNode ? "F" : "C", _modeToggleStyle))
+                    ToggleNodeMode(node);
+                GUI.backgroundColor = savedBg;
+
                 var lblX = hdrR.x + dotOffX + dotSz + 3f * _zoom;
-                float lblW = hdrR.xMax - lblX - 4f * _zoom;
+                float lblW = toggleX - lblX - 4f * _zoom;
 
                 // Shorten display name to last tag segment when the header is too narrow on screen.
                 string headerName = node.DisplayName;
@@ -1726,9 +1784,11 @@ namespace Heathen.Ogham.Editor
             float sw = sr.width - 2f;
             y = DrawSection(node, sr.x + 1f, y, sw, "On Enter",
                 node.Entry.EntryOperations.Count, ref node.Meta.OpsExpanded, 0);
-            y = DrawSection(node, sr.x + 1f, y, sw, "Keys",
-                node.Entry.ContentKeys.Count, ref node.Meta.FieldsExpanded, 1);
-            DrawSection(node, sr.x + 1f, y, sw, "Options",
+            if (!isForkNode)
+                y = DrawSection(node, sr.x + 1f, y, sw, "Keys",
+                    node.Entry.ContentKeys.Count, ref node.Meta.FieldsExpanded, 1);
+            DrawSection(node, sr.x + 1f, y, sw,
+                isForkNode ? "Routes" : "Options",
                 node.Entry.Options.Count, ref node.Meta.ChoicesExpanded, 2);
         }
 
@@ -2006,7 +2066,9 @@ namespace Heathen.Ogham.Editor
                 1 when idx < node.Entry.ContentKeys.Count
                     => KeySummary(node.Entry.ContentKeys[idx], idx, node.Entry.ContentKeys.Count),
                 2 when idx < node.Entry.Options.Count
-                    => OptSummary(node.Entry.Options[idx]),
+                    => node.Entry.Mode == OghamNodeMode.Fork
+                       ? ForkRouteSummary(node.Entry.Options[idx])
+                       : OptSummary(node.Entry.Options[idx]),
                 _ => "",
             };
         }
@@ -2107,6 +2169,30 @@ namespace Heathen.Ogham.Editor
             return s;
         }
 
+        private static string ForkRouteSummary(DialogueOption opt)
+        {
+            // Label: use TextKey as human description, fall back to tag leaf
+            var label = opt.TextKey.Resolve();
+            if (string.IsNullOrEmpty(label))
+            {
+                if (!string.IsNullOrEmpty(opt.TagPath))
+                {
+                    var dot = opt.TagPath.LastIndexOf('.');
+                    label = dot >= 0 ? opt.TagPath.Substring(dot + 1) : opt.TagPath;
+                }
+                else
+                    label = "Route";
+            }
+
+            // Target: last segment of tag path, or "(end)"
+            string target = string.IsNullOrEmpty(opt.TargetEntryPath) ? "(end)"
+                : opt.TargetEntryPath.Substring(opt.TargetEntryPath.LastIndexOf('.') + 1);
+
+            if (opt.Conditions.Count == 0)
+                return $"[default] → {target}";
+            return $"{label} → {target} (if {opt.Conditions.Count})";
+        }
+
         // ── Add / remove items ────────────────────────────────────────────────
 
         private void AddItem(CanvasNode node, int section)
@@ -2124,11 +2210,23 @@ namespace Heathen.Ogham.Editor
                     var opt = new DialogueOption();
                     if (!string.IsNullOrEmpty(node.Entry.TagPath))
                     {
-                        var baseName = node.DisplayName + ".Option";
-                        int n = 1;
-                        while (node.Entry.Options.Any(o =>
-                            !string.IsNullOrEmpty(o.TagPath) && o.TagPath == baseName + n.ToString())) n++;
-                        opt.TagPath = baseName + n.ToString();
+                        if (node.Entry.Mode == OghamNodeMode.Fork)
+                        {
+                            var baseName = node.DisplayName + ".Route";
+                            int n = 1;
+                            while (node.Entry.Options.Any(o =>
+                                !string.IsNullOrEmpty(o.TagPath) && o.TagPath == baseName + n.ToString())) n++;
+                            opt.TagPath = baseName + n.ToString();
+                            opt.TextKey.KeyOrValue = "Route " + n;
+                        }
+                        else
+                        {
+                            var baseName = node.DisplayName + ".Option";
+                            int n = 1;
+                            while (node.Entry.Options.Any(o =>
+                                !string.IsNullOrEmpty(o.TagPath) && o.TagPath == baseName + n.ToString())) n++;
+                            opt.TagPath = baseName + n.ToString();
+                        }
                     }
                     node.Entry.Options.Add(opt);
                     node.Asset.BuildIndex();
@@ -2384,6 +2482,49 @@ namespace Heathen.Ogham.Editor
             OnGraphChanged?.Invoke();
         }
 
+        // ── Node mode toggle ──────────────────────────────────────────────────
+
+        private void ToggleNodeMode(CanvasNode node)
+        {
+            bool toFork = node.Entry.Mode == OghamNodeMode.Content;
+
+            if (toFork && node.Entry.ContentKeys.Count > 0)
+            {
+                if (!EditorUtility.DisplayDialog("Convert to Fork",
+                    "This node has content keys that will be removed. Convert anyway?",
+                    "Convert", "Cancel"))
+                    return;
+            }
+            else if (!toFork && node.Entry.Options.Count > 0)
+            {
+                if (!EditorUtility.DisplayDialog("Convert to Content",
+                    "This node has routes that will be removed. Convert anyway?",
+                    "Convert", "Cancel"))
+                    return;
+            }
+
+            int mi = _assets.IndexOf(node.Asset);
+            Undo.RecordObject(node.Asset, toFork ? "Convert to Fork" : "Convert to Content");
+
+            if (toFork)
+            {
+                node.Entry.ContentKeys.Clear();
+                node.Entry.Mode = OghamNodeMode.Fork;
+            }
+            else
+            {
+                node.Entry.Options.Clear();
+                node.Entry.Mode = OghamNodeMode.Content;
+                node.Asset.BuildIndex();
+            }
+
+            EditorUtility.SetDirty(node.Asset);
+            if (mi >= 0) SaveMeta(_metas[mi]);
+            RefreshNodeHeight(node);
+            RebuildEdgesForNode(node);
+            OnGraphChanged?.Invoke();
+        }
+
         // ── Tag rename propagation ────────────────────────────────────────────
 
         // Scans all loaded assets and metas; updates any reference to oldPath → newPath.
@@ -2483,11 +2624,18 @@ namespace Heathen.Ogham.Editor
             {
                 var cap = node;
                 menu.AddItem(new GUIContent("Rename Tag…"), false, () => OpenRenameDialog(cap));
-                if (!string.IsNullOrEmpty(cap.Entry.TagPath))
+                if (!string.IsNullOrEmpty(cap.Entry.TagPath) && cap.Entry.Mode == OghamNodeMode.Content)
                     menu.AddItem(new GUIContent("Cascade…"), false, () => ShowCascadeDialog(cap));
 
-                // Per-option tab-flag toggles
-                if (node.Entry.Options.Count > 0 && node.Meta.ChoicesExpanded)
+                menu.AddSeparator("");
+                if (cap.Entry.Mode == OghamNodeMode.Content)
+                    menu.AddItem(new GUIContent("Convert to Fork"), false, () => ToggleNodeMode(cap));
+                else
+                    menu.AddItem(new GUIContent("Convert to Content"), false, () => ToggleNodeMode(cap));
+
+                // Per-option tab-flag toggles (Content nodes only — Fork routes are not player-visible)
+                if (node.Entry.Options.Count > 0 && node.Meta.ChoicesExpanded
+                    && node.Entry.Mode == OghamNodeMode.Content)
                 {
                     menu.AddSeparator("");
                     for (int oi = 0; oi < node.Entry.Options.Count; oi++)
@@ -2579,6 +2727,20 @@ namespace Heathen.Ogham.Editor
                         menu.AddItem(new GUIContent("Align/Distribute Vert"),  false, () => AlignSelected(7));
                     }
                 }
+
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent("Edit Director Notes…"), false, () =>
+                {
+                    var anchor  = GUIUtility.GUIToScreenPoint(Event.current.mousePosition);
+                    int notesMi = _assets.IndexOf(cap.Asset);
+                    OghamNotesWindow.Open(cap.Meta.DirectorNotes, newNotes =>
+                    {
+                        if (notesMi >= 0) Undo.RecordObject(_metas[notesMi], "Edit Director Notes");
+                        cap.Meta.DirectorNotes = newNotes ?? "";
+                        if (notesMi >= 0) SaveMeta(_metas[notesMi]);
+                        _host?.Repaint();
+                    }, anchor);
+                });
 
                 menu.AddSeparator("");
                 menu.AddItem(new GUIContent("Delete Node"), false, () => DeleteNode(cap));
@@ -2759,6 +2921,7 @@ namespace Heathen.Ogham.Editor
         private GUIStyle _reorderBtnStyle;
         private GUIStyle _tabLabelStyle;
         private GUIStyle _pillStyle;
+        private GUIStyle _modeToggleStyle;
         private bool     _stylesBuilt;
 
         private void EnsureStyles()
@@ -2828,6 +2991,11 @@ namespace Heathen.Ogham.Editor
                 clipping  = TextClipping.Clip,
                 wordWrap  = false,
                 normal    = { textColor = Color.white, background = null },
+            };
+            _modeToggleStyle = new GUIStyle(GUI.skin.button) {
+                fontSize  = 9, fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                padding   = new RectOffset(0, 0, 0, 0),
             };
         }
 

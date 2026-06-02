@@ -101,6 +101,9 @@ namespace Heathen.Ogham.Editor
                 {
                     TagPath = eo["tag"]?.Value<string>() ?? string.Empty,
                 };
+                if (eo["nodeMode"] is JValue nodeModeTok &&
+                    Enum.TryParse<OghamNodeMode>(nodeModeTok.Value<string>(), true, out var nm))
+                    entry.Mode = nm;
                 ParseContentKeys(eo, entry.ContentKeys);
                 ParseOperations(eo["entryOperations"] as JArray, entry.EntryOperations);
                 ParseOptions(eo["options"] as JArray, entry.Options);
@@ -226,6 +229,17 @@ namespace Heathen.Ogham.Editor
                     Arithmetic = arith,
                     Value      = oo["value"]?.Value<ulong>() ?? 0UL,
                 };
+                var valueTagStr = oo["valueTag"]?.Value<string>();
+                if (!string.IsNullOrWhiteSpace(valueTagStr))
+                {
+                    op.ValueTag  = HashTag(valueTagStr);
+                    op.ValueType = GameplayTagValueType.Tag;
+                }
+                else if (oo["valueType"] is JValue vtTok &&
+                         Enum.TryParse<GameplayTagValueType>(vtTok.Value<string>(), true, out var vt))
+                {
+                    op.ValueType = vt;
+                }
                 ParseConditions(oo["conditions"] as JArray, op.Conditions);
                 ops.Add(op);
             }
@@ -340,6 +354,7 @@ namespace Heathen.Ogham.Editor
                 if (o is JObject oo)
                 {
                     AddTagPath(paths, oo["tag"]?.Value<string>());
+                    AddTagPath(paths, oo["valueTag"]?.Value<string>());
                     CollectConditionTagPaths(oo["conditions"] as JArray, paths);
                 }
         }
@@ -377,6 +392,8 @@ namespace Heathen.Ogham.Editor
             if (no["position"] is JArray pos && pos.Count == 4)
                 nm.Position = new Rect(pos[0]?.Value<float>() ?? 0f, pos[1]?.Value<float>() ?? 0f,
                                        pos[2]?.Value<float>() ?? 300f, pos[3]?.Value<float>() ?? 200f);
+
+            nm.DirectorNotes = no["directorNotes"]?.Value<string>() ?? string.Empty;
 
             if (no["tabFlagOptions"] is JArray tfo)
                 foreach (var t in tfo)
@@ -428,6 +445,9 @@ namespace Heathen.Ogham.Editor
             {
                 var eo = new JObject { ["tag"] = e.TagPath };
 
+                if (e.Mode != OghamNodeMode.Content)
+                    eo["nodeMode"] = e.Mode.ToString();
+
                 if (e.ContentKeys.Count > 0)
                 {
                     var ck = new JArray();
@@ -466,6 +486,10 @@ namespace Heathen.Ogham.Editor
                     ["arithmetic"] = op.Arithmetic.ToString(),
                     ["value"]      = op.Value,
                 };
+                if (op.ValueTag.Id != 0)
+                    oo["valueTag"] = GameplayTagRegistry.GetName(op.ValueTag.Id);
+                if (op.ValueType != GameplayTagValueType.Unsigned)
+                    oo["valueType"] = op.ValueType.ToString();
                 if (op.Conditions.Count > 0)
                     oo["conditions"] = BuildConditionsArray(op.Conditions);
                 arr.Add(oo);
@@ -565,6 +589,9 @@ namespace Heathen.Ogham.Editor
                     ["choicesExpanded"]= n.ChoicesExpanded,
                     ["highlightColor"] = ToHex(n.HighlightColor),
                 };
+
+                if (!string.IsNullOrEmpty(n.DirectorNotes))
+                    no["directorNotes"] = n.DirectorNotes;
 
                 if (n.TabFlagOptions.Count > 0)
                 {

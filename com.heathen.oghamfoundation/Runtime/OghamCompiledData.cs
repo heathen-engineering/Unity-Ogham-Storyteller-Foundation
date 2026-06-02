@@ -172,7 +172,8 @@ namespace Heathen.Ogham
         {
             var dst = new DialogueEntry();
             // Write hash directly — compiled asset carries no string tag paths.
-            dst.Tag = GameplayTag.FromName(src.TagPath);
+            dst.Tag  = GameplayTag.FromName(src.TagPath);
+            dst.Mode = src.Mode;
 
             foreach (var key in src.ContentKeys)
             {
