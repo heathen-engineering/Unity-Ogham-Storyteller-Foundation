@@ -90,6 +90,9 @@ namespace Heathen.Ogham.Editor
 
             foreach (var file in files)
             {
+                // Skip files inside hidden folders (Unity convention: FolderName~).
+                if (IsInHiddenFolder(file)) continue;
+
                 try
                 {
                     var json = File.ReadAllText(file);
@@ -105,6 +108,73 @@ namespace Heathen.Ogham.Editor
                 }
                 catch { /* corrupt or inaccessible file — skip */ }
             }
+        }
+    }
+
+    // When .gptags files are imported, the tag registry gains new entries that .ogham files
+    // may depend on. If .ogham was imported first in the same batch its compiled data will be
+    // empty. Re-importing all .ogham files after a .gptags change fixes the ordering problem.
+    // The same guard catches .ogham files whose ScriptedImporter didn't fire (fresh install
+    // timing) by checking for a null main asset and scheduling a force-reimport.
+    internal class OghamAssetPostprocessor : AssetPostprocessor
+    {
+        static void OnPostprocessAllAssets(
+            string[] importedAssets,
+            string[] deletedAssets,
+            string[] movedAssets,
+            string[] movedFromAssetPaths)
+        {
+            bool gptagsChanged = false;
+            var  oghamToCheck  = new System.Collections.Generic.List<string>();
+
+            foreach (var path in importedAssets)
+            {
+                if (path.EndsWith(".gptags", StringComparison.OrdinalIgnoreCase))
+                    gptagsChanged = true;
+                else if (path.EndsWith(".ogham", StringComparison.OrdinalIgnoreCase))
+                    oghamToCheck.Add(path);
+            }
+
+            if (gptagsChanged)
+            {
+                // Re-import every .ogham in the project after a delay so the tag registry
+                // is fully populated before the importer runs.
+                EditorApplication.delayCall += ReimportAllOgham;
+            }
+            else
+            {
+                // No .gptags change — only recheck .ogham files whose compiled data is missing.
+                foreach (var path in oghamToCheck)
+                {
+                    var p = path;
+                    var compiled = AssetDatabase.LoadAssetAtPath<OghamCompiledData>(p);
+                    if (compiled == null)
+                        EditorApplication.delayCall += () =>
+                            AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate);
+                }
+            }
+        }
+
+        static void ReimportAllOgham()
+        {
+            var dataPath = Application.dataPath;
+            string[] files;
+            try { files = Directory.GetFiles(dataPath, "*.ogham", SearchOption.AllDirectories); }
+            catch { return; }
+
+            foreach (var file in files)
+            {
+                if (IsInHiddenFolder(file)) continue;
+                var assetPath = "Assets" + file.Substring(dataPath.Length).Replace('\\', '/');
+                AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
+            }
+        }
+
+        static bool IsInHiddenFolder(string path)
+        {
+            foreach (var segment in path.Split('/', '\\'))
+                if (segment.EndsWith("~", System.StringComparison.Ordinal)) return true;
+            return false;
         }
     }
 

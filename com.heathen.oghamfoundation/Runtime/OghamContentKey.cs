@@ -4,7 +4,7 @@ using Heathen.Lexicon;
 
 namespace Heathen.Ogham
 {
-    public enum OghamContentType { Text, Image, Audio, Prefab }
+    public enum OghamContentType { Text, Image, Sprite, Audio, Prefab }
 
     [Serializable]
     public class OghamContentKey
@@ -16,6 +16,7 @@ namespace Heathen.Ogham
 
         public bool IsText   => Type == OghamContentType.Text;
         public bool IsImage  => Type == OghamContentType.Image;
+        public bool IsSprite => Type == OghamContentType.Sprite;
         public bool IsAudio  => Type == OghamContentType.Audio;
         public bool IsPrefab => Type == OghamContentType.Prefab;
 

@@ -29,7 +29,8 @@ namespace Heathen.Ogham
         // Use this to resolve inline Ogham:// links so gated links can be styled differently.
         public IReadOnlyList<StoryOption> AllOptions => _allOptions;
 
-        public string     GetText(int index)    => Valid(index) ? _entry.ContentKeys[index].ResolveText()           : string.Empty;
+        public string     GetText(int index)    => Valid(index) ? _entry.ContentKeys[index].ResolveText()                  : string.Empty;
+        public Texture2D  GetTexture(int index) => Valid(index) ? _entry.ContentKeys[index].ResolveAsset() as Texture2D   : null;
         public Sprite     GetSprite(int index)  => Valid(index) ? _entry.ContentKeys[index].ResolveAsset() as Sprite      : null;
         public AudioClip  GetAudio(int index)   => Valid(index) ? _entry.ContentKeys[index].ResolveAsset() as AudioClip   : null;
         public GameObject GetPrefab(int index)  => Valid(index) ? _entry.ContentKeys[index].ResolveAsset() as GameObject  : null;

@@ -307,6 +307,7 @@ namespace Heathen.Ogham.Editor
             {
                 // Convert absolute filesystem path to AssetDatabase-relative path.
                 var relPath = "Assets" + absPath.Substring(dataPath.Length).Replace('\\', '/');
+                if (IsInHiddenFolder(relPath)) continue;
                 LoadOghamFile(relPath);
             }
         }
@@ -320,7 +321,10 @@ namespace Heathen.Ogham.Editor
             if (!Directory.Exists(dataPath)) return;
             var foundPaths = new HashSet<string>();
             foreach (var abs in Directory.GetFiles(dataPath, "*.ogham", SearchOption.AllDirectories))
-                foundPaths.Add("Assets" + abs.Substring(dataPath.Length).Replace('\\', '/'));
+            {
+                var rel = "Assets" + abs.Substring(dataPath.Length).Replace('\\', '/');
+                if (!IsInHiddenFolder(rel)) foundPaths.Add(rel);
+            }
 
             var openPaths = new HashSet<string>(_jsonBacked.Values.Select(v => v.Path));
 
@@ -628,6 +632,16 @@ namespace Heathen.Ogham.Editor
                 if (syntheticMeta != null) UnityEngine.Object.DestroyImmediate(syntheticMeta);
                 if (asset         != null) UnityEngine.Object.DestroyImmediate(asset);
             }
+        }
+
+        // Returns true if any segment of the path ends with '~'.
+        // Unity treats FolderName~ directories as hidden — they are excluded from the
+        // Asset Database and should not be scanned for story files.
+        private static bool IsInHiddenFolder(string path)
+        {
+            foreach (var segment in path.Split('/', '\\'))
+                if (segment.EndsWith("~", System.StringComparison.Ordinal)) return true;
+            return false;
         }
     }
 }

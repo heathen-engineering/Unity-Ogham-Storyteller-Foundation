@@ -884,6 +884,7 @@ namespace Heathen.Ogham.Editor
                 _assetField.objectType = _editType switch {
                     OghamContentType.Audio  => typeof(AudioClip),
                     OghamContentType.Prefab => typeof(GameObject),
+                    OghamContentType.Sprite => typeof(Sprite),
                     _                       => typeof(Texture2D),
                 };
                 _assetField.SetValueWithoutNotify(_editAsset);

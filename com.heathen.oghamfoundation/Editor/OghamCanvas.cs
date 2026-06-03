@@ -819,7 +819,7 @@ namespace Heathen.Ogham.Editor
         }
 
         private static float ContentKeyRowH(OghamContentKey key)
-            => key.Type == OghamContentType.Image ? ImageRowH : RowH;
+            => key.Type is OghamContentType.Image or OghamContentType.Sprite ? ImageRowH : RowH;
 
         // Char-based height estimate for text keys — used in NodeHeight and LayoutMetaDirect
         // (both called outside GUI events where CalcHeight is unavailable).
@@ -827,7 +827,7 @@ namespace Heathen.Ogham.Editor
         private static float TextKeyHEstimate(OghamContentKey key)
         {
             if (key.Type != OghamContentType.Text)
-                return key.Type == OghamContentType.Image ? ImageRowH : RowH;
+                return key.Type is OghamContentType.Image or OghamContentType.Sprite ? ImageRowH : RowH;
             // Use stripped text for char counting — MD markers and tags are invisible when richText is on.
             var text = OghamInlineLinkParser.StripMarkup(key.ResolveText() ?? "");
             if (string.IsNullOrEmpty(text)) return RowH;
@@ -1871,30 +1871,18 @@ namespace Heathen.Ogham.Editor
                 if (sectionIdx == 1)
                     EditorGUI.DrawRect(new Rect(x, y, w, rh), NodeColors.FieldBg);
 
-                float rowIndent = indent + 8f * _zoom;
-                float thumbW    = 0f;
+                float rowIndent  = indent + 8f * _zoom;
+                float reorderW   = rowCount > 1 ? 14f * _zoom : 0f;
+                float reorderGap = rowCount > 1 ? 2f  * _zoom : 0f;
 
-                // Draw thumbnail for image-type content keys.
-                if (contentKey?.Type == OghamContentType.Image)
-                {
-                    float thumbSize = (ImageRowH - 8f) * _zoom;
-                    thumbW = thumbSize + 4f * _zoom;
-                    if (contentKey.AssetRef != null)
-                    {
-                        var tex = UnityEditor.AssetPreview.GetAssetPreview(contentKey.AssetRef)
-                               ?? UnityEditor.AssetPreview.GetMiniThumbnail(contentKey.AssetRef);
-                        if (tex != null)
-                            GUI.DrawTexture(
-                                new Rect(x + rowIndent, y + 4f * _zoom, thumbSize, thumbSize),
-                                tex, ScaleMode.ScaleToFit);
-                    }
-                }
-
-                // Content indented an extra step past the section header label.
-                float contentW  = w - rowIndent - thumbW - rmW - rmPad - pinCol;
-                var   rowR      = new Rect(x + rowIndent + thumbW, y, contentW, rh);
-                var   style    = sectionIdx == 0 ? _rowOpStyle
-                               : sectionIdx == 1 ? _rowKeyStyle : _rowOptStyle;
+                // contentW must not overlap the reorder column — subtract it when visible.
+                float contentW  = w - rowIndent - rmW - rmPad - pinCol - reorderW - reorderGap;
+                // Image/Sprite-key label button spans one line only; thumbnail is drawn below.
+                bool  isAssetRow = contentKey?.Type is OghamContentType.Image or OghamContentType.Sprite;
+                float buttonH    = isAssetRow ? RowH * _zoom : rh;
+                var   rowR      = new Rect(x + rowIndent, y, contentW, buttonH);
+                var   style     = sectionIdx == 0 ? _rowOpStyle
+                                : sectionIdx == 1 ? _rowKeyStyle : _rowOptStyle;
                 int captured = i;
                 // Use cached label string — rebuilt on data change, not every frame.
                 string rowLabel = sectionIdx == 0 && i < node.OpLabels.Length  ? node.OpLabels[i]
@@ -1904,14 +1892,25 @@ namespace Heathen.Ogham.Editor
                 if (GUI.Button(rowR, rowLabel, style))
                     OpenRowPopup(node, sectionIdx, captured);
 
+                // Draw thumbnail for image/sprite-type content keys below the label row.
+                if (isAssetRow && contentKey.AssetRef != null)
+                {
+                    float thumbSize = (ImageRowH - RowH - 8f) * _zoom;
+                    var tex = UnityEditor.AssetPreview.GetAssetPreview(contentKey.AssetRef)
+                           ?? UnityEditor.AssetPreview.GetMiniThumbnail(contentKey.AssetRef);
+                    if (tex != null)
+                        GUI.DrawTexture(
+                            new Rect(x + rowIndent + 2f * _zoom, y + RowH * _zoom + 2f * _zoom, thumbSize, thumbSize),
+                            tex, ScaleMode.ScaleToFit);
+                }
+
                 // Reorder ▲▼ buttons — only visible when section has more than one item
                 if (rowCount > 1)
                 {
-                    float reorderW = 14f * _zoom;
-                    float reorderX = x + w - pinCol - rmPad - rmW - reorderW - rmPad;
+                    float reorderX = x + w - pinCol - rmPad - rmW - reorderW - reorderGap;
                     float halfRh   = rh * 0.5f;
-                    var upR   = new Rect(reorderX, y + rmPad,        reorderW, halfRh - rmPad);
-                    var downR = new Rect(reorderX, y + halfRh,        reorderW, halfRh - rmPad);
+                    var upR   = new Rect(reorderX, y + rmPad,  reorderW, halfRh - rmPad);
+                    var downR = new Rect(reorderX, y + halfRh, reorderW, halfRh - rmPad);
                     if (GUI.Button(upR,   "▲", _reorderBtnStyle) && captured > 0)
                     { MoveItem(node, sectionIdx, captured, -1); break; }
                     if (GUI.Button(downR, "▼", _reorderBtnStyle) && captured < rowCount - 1)
@@ -2160,6 +2159,7 @@ namespace Heathen.Ogham.Editor
         {
             string badge = key.Type switch {
                 OghamContentType.Image  => "[IMG] ",
+                OghamContentType.Sprite => "[SPR] ",
                 OghamContentType.Audio  => "[AUD] ",
                 OghamContentType.Prefab => "[PFB] ",
                 _                       => "",

@@ -208,7 +208,25 @@ namespace Heathen.Ogham.Editor
                             var assetPath = AssetDatabase.GUIDToAssetPath(guidStr);
                             if (!string.IsNullOrEmpty(assetPath))
                             {
-                                contentKey.AssetRef = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                                if (type == OghamContentType.Sprite)
+                                {
+                                    // Sprites are sub-assets — search by name so sprite sheets work.
+                                    var spriteName = ko["assetName"]?.Value<string>();
+                                    var all = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+                                    foreach (var a in all)
+                                    {
+                                        if (a is Sprite s && (string.IsNullOrEmpty(spriteName) || s.name == spriteName))
+                                        { contentKey.AssetRef = s; break; }
+                                    }
+                                }
+                                else
+                                {
+                                    contentKey.AssetRef = type switch {
+                                        OghamContentType.Audio  => AssetDatabase.LoadAssetAtPath<AudioClip>(assetPath),
+                                        OghamContentType.Prefab => AssetDatabase.LoadAssetAtPath<GameObject>(assetPath),
+                                        _                       => AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath),
+                                    };
+                                }
                                 if (contentKey.AssetRef != null && string.IsNullOrEmpty(contentKey.KeyOrValue))
                                     contentKey.KeyOrValue = contentKey.AssetRef.name;
                             }
@@ -478,7 +496,13 @@ namespace Heathen.Ogham.Editor
                         {
                             var guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(k.AssetRef));
                             if (!string.IsNullOrEmpty(guid))
+                            {
                                 ko["assetGuid"] = guid;
+                                // Sprites are sub-assets of a Texture2D file. Store the sub-asset name
+                                // so round-trip loading can find the correct sprite (handles sprite sheets).
+                                if (k.Type == OghamContentType.Sprite)
+                                    ko["assetName"] = k.AssetRef.name;
+                            }
                         }
                         ck.Add(ko);
                     }
