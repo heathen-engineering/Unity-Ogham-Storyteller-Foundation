@@ -91,7 +91,7 @@ namespace Heathen.Ogham.Editor
             foreach (var file in files)
             {
                 // Skip files inside hidden folders (Unity convention: FolderName~).
-                if (IsInHiddenFolder(file)) continue;
+                if (OghamImporterUtils.IsInHiddenFolder(file)) continue;
 
                 try
                 {
@@ -164,13 +164,18 @@ namespace Heathen.Ogham.Editor
 
             foreach (var file in files)
             {
-                if (IsInHiddenFolder(file)) continue;
+                if (OghamImporterUtils.IsInHiddenFolder(file)) continue;
                 var assetPath = "Assets" + file.Substring(dataPath.Length).Replace('\\', '/');
                 AssetDatabase.ImportAsset(assetPath, ImportAssetOptions.ForceUpdate);
             }
         }
+    }
 
-        static bool IsInHiddenFolder(string path)
+    internal static class OghamImporterUtils
+    {
+        // Returns true if any segment of the path ends with '~'.
+        // Unity treats FolderName~ directories as hidden and excludes them from the Asset Database.
+        internal static bool IsInHiddenFolder(string path)
         {
             foreach (var segment in path.Split('/', '\\'))
                 if (segment.EndsWith("~", System.StringComparison.Ordinal)) return true;

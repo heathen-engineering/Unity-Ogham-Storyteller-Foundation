@@ -634,14 +634,6 @@ namespace Heathen.Ogham.Editor
             }
         }
 
-        // Returns true if any segment of the path ends with '~'.
-        // Unity treats FolderName~ directories as hidden — they are excluded from the
-        // Asset Database and should not be scanned for story files.
-        private static bool IsInHiddenFolder(string path)
-        {
-            foreach (var segment in path.Split('/', '\\'))
-                if (segment.EndsWith("~", System.StringComparison.Ordinal)) return true;
-            return false;
-        }
+        private static bool IsInHiddenFolder(string path) => OghamImporterUtils.IsInHiddenFolder(path);
     }
 }
