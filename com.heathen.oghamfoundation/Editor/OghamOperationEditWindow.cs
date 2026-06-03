@@ -6,22 +6,10 @@ using Heathen.GameplayTags;
 
 namespace Heathen.Ogham.Editor
 {
-    // Popup window for editing a single GameplayTagOperation.
-    // Compact layout — no labels; controls are self-evident by position and icon.
-    //
-    // Layout:
-    //   [ TagPath text field                        ][ ▾ picker ]
-    //   [ Operation ▼ ][ type ][ Value / tag field  ][ ▾ picker ]
-    //   Conditions (N)                                         [+]
-    //   ┌──────────────────────────────────────────────────────┐
-    //   │ [ TagPath ][ ▾ ]                                     │
-    //   │ [ ⊞ exact ][ Compare ▼ ][ type ][ Value/tag ][ ▲▼− ]│
-    //   └──────────────────────────────────────────────────────┘
-    //   [ And/Or/Xor ▼ ]
-    //   ┌──────────────────────────────────────────────────────┐
-    //   │ ...next condition...                                 │
-    //   └──────────────────────────────────────────────────────┘
-    //   [ Save ][ Cancel ]
+    /// <summary>
+    /// Popup window for editing a single <see cref="GameplayTagOperation"/>, including its tag, arithmetic,
+    /// value type, value, and any associated conditions. Writes changes back to the operation on save.
+    /// </summary>
     public class OghamOperationEditWindow : EditorWindow
     {
         private GameplayTagOperation  _item;
@@ -78,6 +66,14 @@ namespace Heathen.Ogham.Editor
         private static float CondBlockHeight(int count)
             => count > 0 ? count * CondH + (count - 1) * LogicH : 0f;
 
+        /// <summary>
+        /// Opens the operation editor popup anchored near the given screen position, pre-populated with the
+        /// values of <paramref name="item"/>. Changes are written back to the operation and the asset is marked dirty on save.
+        /// </summary>
+        /// <param name="item">The operation to edit. Changes are written back to this instance on save.</param>
+        /// <param name="asset">The owning <see cref="OghamData"/> asset, marked dirty when saved.</param>
+        /// <param name="onRefresh">Callback invoked after the operation is saved so callers can repaint.</param>
+        /// <param name="anchor">The screen-space position near which the popup is anchored.</param>
         public static void Open(GameplayTagOperation item, OghamData asset, Action onRefresh, Vector2 anchor)
         {
             var w = CreateInstance<OghamOperationEditWindow>();

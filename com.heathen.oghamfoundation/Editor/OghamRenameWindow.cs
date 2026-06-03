@@ -4,8 +4,10 @@ using UnityEngine;
 
 namespace Heathen.Ogham.Editor
 {
-    // Popup for renaming a tag path.
-    // Buttons: [Create] when the tag is new, [Okay] when it already exists, plus [Cancel].
+    /// <summary>
+    /// Popup dialog for renaming a dialogue entry's tag path in the graph editor. Shows a "Create" button
+    /// when the entered tag does not yet exist in the registry, or "Okay" when it already exists.
+    /// </summary>
     public class OghamRenameWindow : EditorWindow
     {
         private string         _tagPath;
@@ -16,6 +18,13 @@ namespace Heathen.Ogham.Editor
         private const float W = 320f;
         private const float H = 74f;  // space + text field + space + button row + padding
 
+        /// <summary>
+        /// Opens the rename popup anchored near the given screen position, pre-filled with <paramref name="current"/>.
+        /// Calls <paramref name="onCommit"/> with the new tag path when the user confirms.
+        /// </summary>
+        /// <param name="current">The existing tag path to pre-fill in the text field.</param>
+        /// <param name="onCommit">Callback invoked with the entered tag path when the user confirms.</param>
+        /// <param name="anchor">The screen-space position near which the popup is anchored.</param>
         public static void Open(string current, Action<string> onCommit, Vector2 anchor)
         {
             var w = CreateInstance<OghamRenameWindow>();

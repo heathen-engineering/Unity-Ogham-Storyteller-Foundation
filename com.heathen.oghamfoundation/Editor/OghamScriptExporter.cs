@@ -6,6 +6,7 @@ using Heathen.Lexicon;
 
 namespace Heathen.Ogham.Editor
 {
+    /// <summary>Enumerates the output formats supported by <see cref="OghamScriptExporter"/>.</summary>
     public enum OghamExportFormat { CSV, Markdown, HTML, PlainText }
 
     // VO script exporter. Supports CSV, Markdown, HTML and plain-text output.
@@ -66,8 +67,14 @@ namespace Heathen.Ogham.Editor
         private static bool IsNonSpeakable(char c)
             => char.IsWhiteSpace(c) || s_NonSpeakableSet.Contains(c);
 
-        // ── Public API ────────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Exports the given dialogue entries to a VO script string in the format specified by
+        /// <see cref="ExportOptions.Format"/>. Text is cleaned via the shared pipeline before output.
+        /// </summary>
+        /// <param name="entries">The dialogue entries to include in the export.</param>
+        /// <param name="metaLookup">A dictionary mapping tag paths to <see cref="OghamNodeMeta"/> for director notes.</param>
+        /// <param name="opts">Export options controlling format, filtering, and text cleaning behaviour.</param>
+        /// <returns>The exported script as a string in the requested format.</returns>
         public static string Export(
             IEnumerable<DialogueEntry>                   entries,
             IReadOnlyDictionary<string, OghamNodeMeta>  metaLookup,

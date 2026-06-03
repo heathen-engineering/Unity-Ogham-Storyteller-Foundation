@@ -9,14 +9,20 @@ namespace Heathen.Ogham.Editor
 {
     internal static class OghamTagHelper
     {
-        // Returns the friendly name for a tag ID from the live registry.
+        /// <summary>
+        /// Returns the dot-path tag name for the given ID from the live <see cref="GameplayTagRegistry"/>,
+        /// or an empty string when the ID is zero or not registered.
+        /// </summary>
+        /// <param name="id">The tag hash ID to look up.</param>
+        /// <returns>The registered name string, or an empty string.</returns>
         public static string GetTagName(ulong id)
         {
             if (id == 0) return "";
             return GameplayTagRegistry.GetName(id) ?? "";
         }
 
-        // All registered tag names, alphabetically sorted.
+        /// <summary>Returns all registered GameplayTag names, sorted alphabetically.</summary>
+        /// <returns>A sorted list of dot-path tag name strings.</returns>
         public static List<string> GetAllTagNames()
         {
             var names = GameplayTagRegistry.GetAllNames();
@@ -25,8 +31,12 @@ namespace Heathen.Ogham.Editor
                 : new List<string>();
         }
 
-        // Ensures tagName is present in a .gptags source file and registered in the live registry.
-        // Safe to call with null/empty — returns immediately.
+        /// <summary>
+        /// Ensures <paramref name="tagName"/> is present in a <c>.gptags</c> source file and registered in the live
+        /// <see cref="GameplayTagRegistry"/>. If no <c>.gptags</c> file exists the user is prompted to create one.
+        /// Safe to call with null or empty input; returns immediately in those cases.
+        /// </summary>
+        /// <param name="tagName">The dot-path tag name to register. Null or empty is silently ignored.</param>
         public static void EnsureRegistered(string tagName)
         {
             if (string.IsNullOrWhiteSpace(tagName)) return;
@@ -43,9 +53,17 @@ namespace Heathen.Ogham.Editor
             WriteGpTagsFile(filePath, tags, registered);
         }
 
+        /// <summary>Returns <c>true</c> when <paramref name="s"/> is a valid dot-path GameplayTag string according to <see cref="GameplayTagRegistry.ValidateTag"/>.</summary>
+        /// <param name="s">The tag path string to validate.</param>
+        /// <returns><c>true</c> if the string is a valid registered tag path; otherwise <c>false</c>.</returns>
         public static bool IsValidTagPath(string s) => GameplayTagRegistry.ValidateTag(s);
 
-        // Shows a GenericMenu of all registered tags; calls onPick(name) on selection.
+        /// <summary>
+        /// Shows a <see cref="GenericMenu"/> listing all registered GameplayTag names. Calls
+        /// <paramref name="onPick"/> with the selected name when the user makes a selection.
+        /// Displays a dialog when no tags are registered.
+        /// </summary>
+        /// <param name="onPick">Callback invoked with the selected tag name string.</param>
         public static void ShowTagPicker(System.Action<string> onPick)
         {
             var names = GetAllTagNames();

@@ -1,10 +1,16 @@
 namespace Heathen.Ogham
 {
+    /// <summary>
+    /// Controls when <see cref="OghamTemplateSpawner"/> pre-fetches prefab assets for upcoming dialogue nodes.
+    /// </summary>
     public enum OghamLoadMode
     {
-        // On OnDialogueEntered, pre-load prefab assets for all option target entries (one node lookahead).
+        /// <summary>
+        /// When a dialogue node is entered, pre-fetch prefab assets for all target entries reachable via the
+        /// current node's options (one-node lookahead), so assets are resident before the player makes a choice.
+        /// </summary>
         PreWarm,
-        // Load prefab assets only when the entry that needs them is actually entered.
+        /// <summary>Load prefab assets only when the dialogue entry that requires them is actually entered.</summary>
         OnDemand,
     }
 }

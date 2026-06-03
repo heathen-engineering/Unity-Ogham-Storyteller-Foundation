@@ -7,13 +7,29 @@ using Heathen.Lexicon;
 
 namespace Heathen.Ogham
 {
+    /// <summary>
+    /// MonoBehaviour authoring component that references an <see cref="OghamData"/> asset for ECS baking.
+    /// Add this component to a SubScene object and assign <see cref="Data"/> to produce an entity with an
+    /// <see cref="OghamBlobComponent"/> at build time.
+    /// </summary>
     public class OghamDataAuthoring : MonoBehaviour
     {
+        /// <summary>The authoring data asset to bake into an ECS blob asset.</summary>
         public OghamData Data;
     }
 
+    /// <summary>
+    /// Baker that converts an <see cref="OghamDataAuthoring"/> component into an ECS entity carrying an
+    /// <see cref="OghamBlobComponent"/>. The blob asset contains all dialogue entries sorted by tag ID
+    /// for efficient O(log n) lookup from Burst jobs.
+    /// </summary>
     public class OghamDataBaker : Baker<OghamDataAuthoring>
     {
+        /// <summary>
+        /// Bakes the referenced <see cref="OghamData"/> into a persistent <see cref="OghamBlob"/> asset
+        /// and attaches it to the baked entity as an <see cref="OghamBlobComponent"/>.
+        /// </summary>
+        /// <param name="authoring">The authoring component whose <see cref="OghamDataAuthoring.Data"/> is baked.</param>
         public override void Bake(OghamDataAuthoring authoring)
         {
             if (authoring.Data == null) return;

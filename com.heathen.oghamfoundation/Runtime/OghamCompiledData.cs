@@ -19,29 +19,45 @@ namespace Heathen.Ogham
     /// (Tools → Heathen → Ogham Storyteller).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// A single localised string entry embedded inside a compiled story asset. Used to inject
+    /// inline localisations from a .ogham source file into <see cref="Heathen.Lexicon.LexiconRegistry"/> at runtime.
+    /// </summary>
     [Serializable]
     public struct OghamCompiledLocale
     {
+        /// <summary>BCP 47 culture code, for example "en" or "fr". Empty means the invariant culture.</summary>
         public string Culture;
+        /// <summary>The dot-path Lexicon key used to look up this string at runtime.</summary>
         public string Key;
+        /// <summary>The localised string value for the given culture and key.</summary>
         public string Value;
     }
 
     [CreateAssetMenu(menuName = "Heathen/Ogham/Compiled Story", fileName = "OghamStory")]
     public class OghamCompiledData : ScriptableObject
     {
+        /// <summary>All compiled dialogue entries in this story, ready for runtime use.</summary>
         [SerializeField] public List<DialogueEntry> Entries = new();
 
-        // Set by OghamImporter when compiled from a .ogham source file.
-        // StorytellerRegistry uses this as the story identity when _storyTagPath is not set.
+        /// <summary>
+        /// The dot-path GameplayTag that identifies this story. Set by the importer when compiled from a
+        /// .ogham source file. <see cref="StorytellerRegistry"/> uses this as the story identity when its
+        /// own story tag path field is left blank.
+        /// </summary>
         public string StoryTagPath = string.Empty;
 
-        // Inline localisations from the .ogham source — injected into LexiconRegistry on registration.
+        /// <summary>
+        /// Inline localisations extracted from the .ogham source file. These are injected into
+        /// <see cref="Heathen.Lexicon.LexiconRegistry"/> when the story is registered at runtime.
+        /// </summary>
         public OghamCompiledLocale[] Localisations = System.Array.Empty<OghamCompiledLocale>();
 
-        // GUIDs of source OghamData authoring assets — editor side only.
-        // Stored as strings to avoid Unity pulling OghamData assets into player builds
-        // through serialized UnityEngine.Object references.
+        /// <summary>
+        /// Asset GUIDs of the source <see cref="OghamData"/> authoring assets. Stored as strings rather than
+        /// direct object references to prevent Unity from including authoring assets in player builds.
+        /// Editor-only; not used at runtime.
+        /// </summary>
         [SerializeField] private string[] _sourceGuids = System.Array.Empty<string>();
 
         private Dictionary<ulong, DialogueEntry>  _index;
@@ -49,6 +65,11 @@ namespace Heathen.Ogham
 
         private void OnEnable() => BuildIndex();
 
+        /// <summary>
+        /// Finds and returns the compiled dialogue entry matching the given tag, or <c>null</c> if not found.
+        /// </summary>
+        /// <param name="tag">The GameplayTag whose ID is used to look up the entry.</param>
+        /// <returns>The matching <see cref="DialogueEntry"/>, or <c>null</c>.</returns>
         public DialogueEntry FindEntry(GameplayTag tag) => FindEntry(tag.Id);
 
         internal DialogueEntry FindEntry(ulong tagId)
@@ -57,12 +78,23 @@ namespace Heathen.Ogham
             return _index.TryGetValue(tagId, out var e) ? e : null;
         }
 
+        /// <summary>
+        /// Returns the tag IDs of all entries that are direct navigation targets of options on the given parent entry.
+        /// </summary>
+        /// <param name="parentId">The tag ID of the parent entry whose children are requested.</param>
+        /// <returns>An enumerable of child entry tag IDs, or an empty sequence when none exist.</returns>
         public IEnumerable<ulong> GetChildren(ulong parentId)
         {
             if (_childIndex == null) BuildIndex();
             return _childIndex.TryGetValue(parentId, out var set) ? set : System.Array.Empty<ulong>();
         }
 
+        /// <summary>
+        /// Performs a breadth-first traversal of the graph from <paramref name="entryId"/> and adds all reachable
+        /// descendant entry IDs to <paramref name="results"/>. Already-visited IDs are not added twice.
+        /// </summary>
+        /// <param name="entryId">The tag ID of the entry to start traversal from.</param>
+        /// <param name="results">The set to populate with discovered descendant IDs.</param>
         public void CollectDescendants(ulong entryId, HashSet<ulong> results)
         {
             if (_childIndex == null) BuildIndex();
@@ -77,6 +109,11 @@ namespace Heathen.Ogham
             }
         }
 
+        /// <summary>
+        /// Rebuilds the internal tag-ID-to-entry and parent-to-child lookup dictionaries from <see cref="Entries"/>.
+        /// Called automatically on <c>OnEnable</c> and <c>OnValidate</c>; call manually after modifying
+        /// <see cref="Entries"/> at runtime.
+        /// </summary>
         public void BuildIndex()
         {
             _index      = new Dictionary<ulong, DialogueEntry>(Entries.Count);
@@ -109,6 +146,11 @@ namespace Heathen.Ogham
 #if UNITY_EDITOR
         private void OnValidate() => BuildIndex();
 
+        /// <summary>
+        /// Returns all source <see cref="OghamData"/> authoring assets registered with this compiled asset,
+        /// resolving them from their stored GUIDs via the AssetDatabase. Editor-only.
+        /// </summary>
+        /// <returns>A list of resolved <see cref="OghamData"/> assets; entries whose GUIDs no longer resolve are omitted.</returns>
         public List<OghamData> GetSourceFiles()
         {
             var result = new List<OghamData>(_sourceGuids.Length);
@@ -122,6 +164,11 @@ namespace Heathen.Ogham
             return result;
         }
 
+        /// <summary>
+        /// Stores the given <see cref="OghamData"/> assets as source files by recording their AssetDatabase GUIDs.
+        /// Marks this asset dirty so Unity serialises the change. Editor-only.
+        /// </summary>
+        /// <param name="files">The authoring assets whose GUIDs will be stored. Null entries are skipped.</param>
         public void SetSourceFiles(IEnumerable<OghamData> files)
         {
             var guids = new List<string>();
@@ -164,10 +211,14 @@ namespace Heathen.Ogham
             Debug.Log($"[Ogham] Compiled {Entries.Count} entries from {sources.Count} source file(s) into '{name}'.");
         }
 
-        // Deep-copies an entry into a compiled form:
-        //   - Tag and option tags stored as GameplayTag (ulong hash), no string paths.
-        //   - Text ContentKeys converted to TMPro markup; pure-link keys dropped.
-        //   - Options deep-copied so compiled and authoring data don't share instances.
+        /// <summary>
+        /// Deep-copies a source <see cref="DialogueEntry"/> into a compiled form suitable for runtime use.
+        /// Tag and option tags are stored as hashed <see cref="GameplayTags.GameplayTag"/> values with no string paths,
+        /// Text ContentKeys are converted to TMPro markup, pure-link keys are dropped, and options are deep-copied
+        /// so the compiled and authoring data share no instances.
+        /// </summary>
+        /// <param name="src">The authoring entry to compile.</param>
+        /// <returns>A new <see cref="DialogueEntry"/> containing compiled runtime data.</returns>
         public static DialogueEntry CompileEntry(DialogueEntry src)
         {
             var dst = new DialogueEntry();

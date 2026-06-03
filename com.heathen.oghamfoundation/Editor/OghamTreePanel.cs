@@ -9,28 +9,39 @@ using Heathen.Ogham;
 
 namespace Heathen.Ogham.Editor
 {
-    // Left-side file/entry hierarchy panel for the Ogham graph editor.
+    /// <summary>
+    /// Left-side file and entry hierarchy panel for the Ogham graph editor. Displays a scrollable list of loaded
+    /// <see cref="OghamData"/> assets and their dialogue entries with expand/collapse, visibility, and colour controls.
+    /// </summary>
     public class OghamTreePanel : VisualElement
     {
+        /// <summary>Raised when the user clicks a dialogue entry row. Provides the owning asset and the selected entry.</summary>
         public event System.Action<OghamData, DialogueEntry> OnEntrySelected;
+        /// <summary>Raised when the user clicks an asset row header.</summary>
         public event System.Action<OghamData>                OnAssetSelected;
+        /// <summary>Raised when the user closes an asset from the panel.</summary>
         public event System.Action<OghamData>                OnAssetClosed;
+        /// <summary>Raised when the user toggles the eye button for an asset. The boolean parameter is <c>true</c> when the asset is now hidden.</summary>
         public event System.Action<OghamData, bool>          OnAssetVisibilityChanged;
 
-        // Optional delegate for resolving the display name of an entry.
+        /// <summary>Optional delegate that resolves the display name for a dialogue entry. Falls back to the tag path when <c>null</c>.</summary>
         public System.Func<DialogueEntry, string> NameResolver { get; set; }
 
-        // Optional delegates for reading and writing per-asset node header colors.
+        /// <summary>Optional delegate for reading the per-asset node header colour to display in the colour swatch.</summary>
         public System.Func<OghamData, Color>   ColorGetter { get; set; }
+        /// <summary>Optional delegate for writing the per-asset node header colour when the user changes the swatch.</summary>
         public System.Action<OghamData, Color> ColorSetter { get; set; }
 
-        // Optional: resolve the AssetDatabase path for a synthetic (.ogham-backed) asset so clicks can ping the file.
+        /// <summary>
+        /// Optional delegate that resolves the AssetDatabase path for a synthetic (<c>.ogham</c>-backed) asset
+        /// so that clicking the asset label pings the source file rather than the synthetic object.
+        /// </summary>
         public System.Func<OghamData, string> PathResolver { get; set; }
 
-        // Optional: returns true when the given asset is the current active target for new nodes.
+        /// <summary>Optional delegate that returns <c>true</c> when the given asset is the current active target for new nodes.</summary>
         public System.Func<OghamData, bool> IsActiveAsset { get; set; }
 
-        // Assets whose nodes should be hidden in the canvas view.
+        /// <summary>The set of assets whose nodes are currently hidden in the canvas view.</summary>
         public readonly HashSet<OghamData> HiddenAssets = new();
 
         private readonly ScrollView                  _scroll;
@@ -38,6 +49,9 @@ namespace Heathen.Ogham.Editor
         private readonly Dictionary<OghamData, bool> _expanded = new();
         private string                               _searchQuery = "";
 
+        /// <summary>
+        /// Initialises the tree panel, building its header, search field, and scrollable asset list.
+        /// </summary>
         public OghamTreePanel()
         {
             style.width            = 220f;
@@ -80,6 +94,8 @@ namespace Heathen.Ogham.Editor
             Add(_scroll);
         }
 
+        /// <summary>Replaces the current asset list with the given collection and rebuilds the panel.</summary>
+        /// <param name="assets">The assets to display in the panel.</param>
         public void LoadAssets(IEnumerable<OghamData> assets)
         {
             _assets.Clear();
@@ -87,6 +103,8 @@ namespace Heathen.Ogham.Editor
             Rebuild();
         }
 
+        /// <summary>Adds an asset to the panel and rebuilds the list. Duplicate additions are silently ignored.</summary>
+        /// <param name="asset">The asset to add.</param>
         public void AddAsset(OghamData asset)
         {
             if (!_assets.Contains(asset))
@@ -96,12 +114,17 @@ namespace Heathen.Ogham.Editor
             }
         }
 
+        /// <summary>Removes an asset from the panel and rebuilds the list. Has no effect when the asset is not in the panel.</summary>
+        /// <param name="asset">The asset to remove.</param>
         public void RemoveAsset(OghamData asset)
         {
             if (_assets.Remove(asset))
                 Rebuild();
         }
 
+        /// <summary>
+        /// Clears and rebuilds all asset and entry rows, applying the current search filter and expand/collapse state.
+        /// </summary>
         public void Rebuild()
         {
             _scroll.Clear();

@@ -8,16 +8,22 @@ using Heathen.Lexicon;
 
 namespace Heathen.Ogham.Editor
 {
-    // Compiles .ogham JSON source files into:
-    //   OghamCompiledData  (main sub-asset) — runtime-ready, TMPro markup, inline localisations
-    //   OghamGraphMetadata (secondary)      — graph editor layout, stored in _editor block
-    //
-    // Tags referenced in the file are registered with GameplayTagRegistry at import time
-    // so ancestry queries work without a separate .gptags file for dialogue-internal tags.
-    // Inline localisations are injected into LexiconRegistry for editor-time string resolution.
+    /// <summary>
+    /// <c>ScriptedImporter</c> for <c>.ogham</c> JSON source files. Compiles each file into an
+    /// <see cref="OghamCompiledData"/> main sub-asset (runtime-ready, with TMPro markup and inline localisations)
+    /// and an <see cref="OghamGraphMetadata"/> secondary sub-asset (graph editor layout from the <c>_editor</c> block).
+    /// Tags referenced in the file are registered with <see cref="GameplayTags.GameplayTagRegistry"/> at import time
+    /// so ancestry queries work without a separate <c>.gptags</c> file. Inline localisations are injected into
+    /// <see cref="Heathen.Lexicon.LexiconRegistry"/> for editor-time string resolution.
+    /// </summary>
     [ScriptedImporter(1, "ogham")]
     public class OghamImporter : ScriptedImporter
     {
+        /// <summary>
+        /// Imports the <c>.ogham</c> JSON file at <c>ctx.assetPath</c>, compiling it into an
+        /// <see cref="OghamCompiledData"/> main asset and an <see cref="OghamGraphMetadata"/> secondary asset.
+        /// </summary>
+        /// <param name="ctx">The import context provided by Unity's asset import pipeline.</param>
         public override void OnImportAsset(AssetImportContext ctx)
         {
             string json;
@@ -75,12 +81,20 @@ namespace Heathen.Ogham.Editor
         }
     }
 
-    // Registers tags and localisations from all .ogham files on editor load and after imports.
+    /// <summary>
+    /// Registers GameplayTags and inline localisations from all <c>.ogham</c> files on editor load and after imports,
+    /// ensuring that tags and string values are available in the editor without requiring a full play-mode session.
+    /// </summary>
     [InitializeOnLoad]
     public static class OghamImporterRefresh
     {
         static OghamImporterRefresh() => EditorApplication.delayCall += Refresh;
 
+        /// <summary>
+        /// Scans all <c>.ogham</c> files in the project, registers their tags with
+        /// <see cref="GameplayTags.GameplayTagRegistry"/>, and injects their inline localisations into
+        /// <see cref="Heathen.Lexicon.LexiconRegistry"/>. Called automatically on editor load.
+        /// </summary>
         public static void Refresh()
         {
             var dataPath = Application.dataPath;

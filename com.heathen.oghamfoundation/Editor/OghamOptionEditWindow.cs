@@ -9,30 +9,11 @@ using Heathen.Lexicon.Editor;
 
 namespace Heathen.Ogham.Editor
 {
-    // Popup window for editing a single DialogueOption.
-    // Compact layout — no labels on tag/op/value controls; positions are self-evident.
-    //
-    // Layout:
-    //   [ Option tag path text field                ][ ▾ picker ]
-    //   [ Literal|Localised ▼ ] [ text / key value field       ][ ▾ ]
-    //   [ Target entry tag                          ][ ▾ picker ]
-    //   (hint text)
-    //   Conditions (N)                                         [+]
-    //   ┌────────────────────────────────────────────────────────┐
-    //   │ [ TagPath ][ ▾ ]                                       │
-    //   │ [ ⊞ exact ][ Compare ▼ ][ type ][ Value/tag ][ − ]    │
-    //   └────────────────────────────────────────────────────────┘
-    //   Operations (N)                                         [+]
-    //   ┌────────────────────────────────────────────────────────┐
-    //   │ [ TagPath ][ ▾ ]                                       │
-    //   │ [ Op ▼ ][ type ][ Value / tag field         ][ − ]     │
-    //   │   Conditions (N)                              [+]      │
-    //   │   ┌──────────────────────────────────────────────────┐ │
-    //   │   │ [ TagPath ][ ▾ ]                                 │ │
-    //   │   │ [ ⊞ ][ Compare ▼ ][ type ][ Value/tag ][ − ]    │ │
-    //   │   └──────────────────────────────────────────────────┘ │
-    //   └────────────────────────────────────────────────────────┘
-    //   [ Save ][ Cancel ]
+    /// <summary>
+    /// Popup window for editing a single <see cref="DialogueOption"/>, including its tag path, display text,
+    /// navigation target, conditions, and operations (each with their own sub-conditions).
+    /// Writes all changes back to the option on save.
+    /// </summary>
     public class OghamOptionEditWindow : EditorWindow
     {
         private DialogueOption _item;
@@ -113,6 +94,14 @@ namespace Heathen.Ogham.Editor
             }
         }
 
+        /// <summary>
+        /// Opens the option editor popup anchored near the given screen position, pre-populated with the
+        /// values of <paramref name="item"/>. Changes are written back to the option and the asset is marked dirty on save.
+        /// </summary>
+        /// <param name="item">The dialogue option to edit. Changes are written back to this instance on save.</param>
+        /// <param name="asset">The owning <see cref="OghamData"/> asset, marked dirty when saved.</param>
+        /// <param name="onRefresh">Callback invoked after the option is saved so callers can repaint.</param>
+        /// <param name="anchor">The screen-space position near which the popup is anchored.</param>
         public static void Open(DialogueOption item, OghamData asset, Action onRefresh, Vector2 anchor)
         {
             var w = CreateInstance<OghamOptionEditWindow>();

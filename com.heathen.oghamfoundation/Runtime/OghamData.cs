@@ -4,9 +4,15 @@ using Heathen.GameplayTags;
 
 namespace Heathen.Ogham
 {
+    /// <summary>
+    /// Authoring asset that holds the raw <see cref="DialogueEntry"/> list for a portion of a story.
+    /// Used directly in the graph editor and during editor iteration; compiled into <see cref="OghamCompiledData"/>
+    /// for player builds. Register with an <see cref="OghamStory"/> via <see cref="OghamStory.RegisterData(OghamData)"/>.
+    /// </summary>
     [CreateAssetMenu(menuName = "Heathen/Ogham/Dialogue Data", fileName = "OghamData")]
     public class OghamData : ScriptableObject
     {
+        /// <summary>All dialogue entries authored in this data asset.</summary>
         public List<DialogueEntry> Entries = new();
 
         private Dictionary<ulong, DialogueEntry> _index;
@@ -14,6 +20,11 @@ namespace Heathen.Ogham
 
         private void OnEnable() => BuildIndex();
 
+        /// <summary>
+        /// Finds and returns the dialogue entry whose tag matches <paramref name="tag"/>, or <c>null</c> if not found.
+        /// </summary>
+        /// <param name="tag">The GameplayTag whose ID is used to look up the entry.</param>
+        /// <returns>The matching <see cref="DialogueEntry"/>, or <c>null</c>.</returns>
         public DialogueEntry FindEntry(GameplayTag tag) => FindEntry(tag.Id);
 
         internal DialogueEntry FindEntry(ulong tagId)
@@ -22,12 +33,23 @@ namespace Heathen.Ogham
             return _index.TryGetValue(tagId, out var e) ? e : null;
         }
 
+        /// <summary>
+        /// Returns the tag IDs of all entries that are direct navigation targets of options on the entry with the given ID.
+        /// </summary>
+        /// <param name="parentId">The tag ID of the parent entry.</param>
+        /// <returns>An enumerable of child entry tag IDs, or an empty sequence when none exist.</returns>
         public IEnumerable<ulong> GetChildren(ulong parentId)
         {
             if (_childIndex == null) BuildIndex();
             return _childIndex.TryGetValue(parentId, out var set) ? set : System.Array.Empty<ulong>();
         }
 
+        /// <summary>
+        /// Performs a breadth-first traversal from <paramref name="entryId"/> and adds all reachable descendant
+        /// entry IDs to <paramref name="results"/>. Already-visited IDs are not added twice.
+        /// </summary>
+        /// <param name="entryId">The tag ID of the entry to start traversal from.</param>
+        /// <param name="results">The set to populate with discovered descendant IDs.</param>
         public void CollectDescendants(ulong entryId, HashSet<ulong> results)
         {
             if (_childIndex == null) BuildIndex();
@@ -42,6 +64,11 @@ namespace Heathen.Ogham
             }
         }
 
+        /// <summary>
+        /// Rebuilds the internal tag-ID-to-entry and parent-to-child lookup dictionaries from <see cref="Entries"/>.
+        /// Called automatically on <c>OnEnable</c> and <c>OnValidate</c>; call manually after modifying
+        /// <see cref="Entries"/> at runtime or in the editor.
+        /// </summary>
         public void BuildIndex()
         {
             _index = new Dictionary<ulong, DialogueEntry>(Entries.Count);

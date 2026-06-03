@@ -9,19 +9,29 @@ using Heathen.Ogham;
 
 namespace Heathen.Ogham.Editor
 {
+    /// <summary>
+    /// The main Ogham Storyteller graph editor window. Open via <c>Window &rarr; Ogham Storyteller</c>.
+    /// Manages loading, saving, auto-layout, playback, import, and export of dialogue story assets.
+    /// </summary>
     public class OghamGraphEditorWindow : EditorWindow
     {
+        /// <summary>Opens the Ogham Storyteller graph editor window, docked next to the Scene view.</summary>
         [MenuItem("Window/Ogham Storyteller")]
         public static void Open() => GetWindow<OghamGraphEditorWindow>(typeof(SceneView));
 
+        /// <summary>Opens the Ogham Storyteller graph editor window and loads the given <see cref="OghamData"/> asset.</summary>
+        /// <param name="data">The asset to open and display in the graph editor.</param>
         public static void OpenAsset(OghamData data)
         {
             var w = GetWindow<OghamGraphEditorWindow>(typeof(SceneView));
             w.LoadAsset(data);
         }
 
-        // Opens a .ogham source file in the graph editor. Called from OghamImporterEditor
-        // and from LoadAllAssets when the window opens.
+        /// <summary>
+        /// Opens a <c>.ogham</c> source file in the graph editor. Called from <c>OghamImporterEditor</c>
+        /// and from <c>LoadAllAssets</c> when the window first opens.
+        /// </summary>
+        /// <param name="assetPath">The AssetDatabase-relative path to the <c>.ogham</c> file.</param>
         public static void OpenOghamFile(string assetPath)
         {
             var w = GetWindow<OghamGraphEditorWindow>(typeof(SceneView));
@@ -164,8 +174,10 @@ namespace Heathen.Ogham.Editor
             _jsonBacked.Clear();
         }
 
-        // ── Public API ────────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Loads an <see cref="OghamData"/> asset into the open graph editor window. Duplicate loads are silently ignored.
+        /// </summary>
+        /// <param name="data">The asset to load. <c>null</c> is silently ignored.</param>
         public void LoadAsset(OghamData data)
         {
             if (data == null || _openAssets.Contains(data)) return;
@@ -174,7 +186,11 @@ namespace Heathen.Ogham.Editor
             _treePanel?.AddAsset(data);
         }
 
-        // Called by OghamTweeImportWindow after a commit to rebuild and layout the new nodes.
+        /// <summary>
+        /// Rebuilds the canvas and auto-layouts the nodes belonging to <paramref name="data"/>.
+        /// Called by the Twee import window after writing new content to an already-open asset.
+        /// </summary>
+        /// <param name="data">The asset whose nodes are rebuilt and laid out.</param>
         public void RefreshAndLayoutAsset(OghamData data)
         {
             if (data == null || !_openAssets.Contains(data)) return;
@@ -184,8 +200,11 @@ namespace Heathen.Ogham.Editor
             _treePanel?.Rebuild();
         }
 
-        // Reload a .ogham file that may already be open, then auto-layout the new nodes.
-        // Called by OghamTweeImportWindow after writing imported content to the file.
+        /// <summary>
+        /// Reloads a <c>.ogham</c> source file that may already be open in the editor, closing the old instance
+        /// and re-opening from the updated file. Called by the Twee import window after writing imported content.
+        /// </summary>
+        /// <param name="assetPath">The AssetDatabase-relative path of the <c>.ogham</c> file to reload.</param>
         public void RefreshOghamFile(string assetPath)
         {
             // If the file is currently open, close and destroy it first.
@@ -257,7 +276,11 @@ namespace Heathen.Ogham.Editor
             }
         }
 
-        // Called by OghamAssetWatcher when assets are deleted from the project.
+        /// <summary>
+        /// Unloads any open assets whose paths appear in <paramref name="deletedPaths"/>.
+        /// Called by <see cref="OghamAssetWatcher"/> when assets are deleted from the project.
+        /// </summary>
+        /// <param name="deletedPaths">The AssetDatabase-relative paths of the deleted assets.</param>
         public void UnloadDeletedAssets(string[] deletedPaths)
         {
             var pathSet = new System.Collections.Generic.HashSet<string>(deletedPaths);

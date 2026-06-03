@@ -4,10 +4,12 @@ using Heathen.GameplayTags;
 
 namespace Heathen.Ogham
 {
-    // Creates and registers an OghamStory with Storyteller on Awake.
-    // The story persists beyond this component's lifetime — destroying the GameObject
-    // does NOT unregister the story. Call Storyteller.UnregisterStory explicitly
-    // if the story should be removed (e.g., a mod was unloaded).
+    /// <summary>
+    /// MonoBehaviour that creates and registers an <see cref="OghamStory"/> with <see cref="Storyteller"/> on Awake.
+    /// The story persists beyond this component's lifetime; destroying the GameObject does NOT unregister the story.
+    /// Call <see cref="Storyteller.UnregisterStory"/> explicitly if the story should be removed, for example
+    /// when a mod is unloaded.
+    /// </summary>
     public class StorytellerRegistry : MonoBehaviour
     {
         [Tooltip("Dot-path tag that uniquely identifies this story. E.g. Story.MainQuest")]

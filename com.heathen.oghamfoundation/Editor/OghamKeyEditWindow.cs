@@ -11,29 +11,11 @@ using Heathen.Ogham;
 
 namespace Heathen.Ogham.Editor
 {
-    // Popup for editing a single OghamContentKey.
-    //
-    // Source format: Markdown-like syntax — the same engine-agnostic dialect used
-    // in the .ogham file.  **bold**  *italic*  [display](Ogham://Tag)
-    // TMPro-only features (underline, colour, size) are embedded as raw TMPro tags
-    // in the source; OghamInlineLinkParser.ToTMProMarkup passes them through unchanged.
-    //
-    // Two display modes for the editing surface:
-    //   Source (default) — shows MD source, fully editable, rich text OFF.
-    //   Formatted        — calls ToTMProMarkup, shows the result with rich text ON,
-    //                       read-only.  Acts as a "smoke and mirrors" TMPro preview.
-    //
-    // Toolbar buttons always edit the MD source; switching to Formatted only affects
-    // the display — the backing _editValue is always the MD string.
-    //
-    // Layout:
-    //   [Type ▼] [Literal|Localised ▼]                   [Save] [X]
-    //   [B] [I] [U] [■ color] [A] [size ▼] [🔗] [Formatted]
-    //   [ source/preview TextField — 320 px, scrolls                  ]
-    //   (lexicon key row — Localised mode only)
-    //   (link panel — when open)
-    //   -- OR (non-text type) --
-    //   [ ObjectField ]
+    /// <summary>
+    /// Popup editor for a single <see cref="OghamContentKey"/>. Supports two display modes: Source mode
+    /// (Markdown-like syntax, fully editable) and Formatted mode (TMPro preview, read-only). Toolbar buttons
+    /// always edit the MD source; the formatted view is a live preview. Non-text types show an ObjectField.
+    /// </summary>
     public class OghamKeyEditWindow : EditorWindow
     {
         private OghamContentKey    _item;
@@ -105,8 +87,14 @@ namespace Heathen.Ogham.Editor
         private bool IsLiteral => _editMode == LexiconLocMode.Literal;
 
 
-        // ── Open ──────────────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Opens the content key editor popup anchored near the given screen position, pre-populated with the
+        /// values of <paramref name="item"/>. Calls <paramref name="onRefresh"/> and marks the asset dirty on save.
+        /// </summary>
+        /// <param name="item">The content key to edit. Changes are written back to this instance on save.</param>
+        /// <param name="asset">The owning <see cref="OghamData"/> asset, marked dirty when saved.</param>
+        /// <param name="onRefresh">Callback invoked after the key is saved so callers can repaint.</param>
+        /// <param name="anchor">The screen-space position near which the popup is anchored.</param>
         public static void Open(OghamContentKey item, OghamData asset, Action onRefresh, Vector2 anchor)
         {
             var w = CreateInstance<OghamKeyEditWindow>();

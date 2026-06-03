@@ -6,9 +6,10 @@ using Heathen.Ogham;
 
 namespace Heathen.Ogham.Editor
 {
-    // Trello-style label picker / manager.
-    // Node mode   : opened from "Labels…" on a node — shows assign checkboxes.
-    // Overview mode: opened from "Manage Labels…" on the canvas — shows defs only.
+    /// <summary>
+    /// Trello-style label picker and manager popup. In node mode (opened from a node's Labels button) it shows
+    /// assign checkboxes; in overview mode (opened from Manage Labels) it shows only label definitions.
+    /// </summary>
     public class OghamLabelPickerPopup : EditorWindow
     {
         private OghamGraphMetadata _meta;
@@ -36,8 +37,14 @@ namespace Heathen.Ogham.Editor
         private const float BtnW       = 22f;
         private const float FieldCentreOffset = 20f;
 
-        // ── Open helpers ──────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Opens the label picker in node mode, showing assignment checkboxes for the given node.
+        /// </summary>
+        /// <param name="meta">The graph metadata asset that owns the label definitions.</param>
+        /// <param name="nodeMeta">The node whose label assignments are edited.</param>
+        /// <param name="asset">The owning data asset, marked dirty on changes.</param>
+        /// <param name="onChanged">Callback invoked whenever labels are assigned, removed, or modified.</param>
+        /// <param name="anchor">The screen-space position near which the popup is anchored.</param>
         public static void OpenNodeMode(OghamGraphMetadata meta, OghamNodeMeta nodeMeta,
             OghamData asset, Action onChanged, Vector2 anchor)
         {
@@ -53,6 +60,12 @@ namespace Heathen.Ogham.Editor
             w.Focus();
         }
 
+        /// <summary>
+        /// Opens the label picker in overview mode, showing only the global label definitions without node-assignment checkboxes.
+        /// </summary>
+        /// <param name="meta">The graph metadata asset whose label definitions are managed.</param>
+        /// <param name="onChanged">Callback invoked whenever labels are created, deleted, or renamed.</param>
+        /// <param name="anchor">The screen-space position near which the popup is anchored.</param>
         public static void OpenOverviewMode(OghamGraphMetadata meta,
             Action onChanged, Vector2 anchor)
         {

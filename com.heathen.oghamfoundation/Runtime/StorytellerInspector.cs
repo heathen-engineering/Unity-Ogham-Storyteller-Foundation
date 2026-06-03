@@ -4,13 +4,21 @@ using Heathen.GameplayTags;
 
 namespace Heathen.Ogham
 {
-    // Which story to track: the current main story, or a specific named story.
-    public enum StoryTarget { Main, Specific }
+    /// <summary>Determines which story a <see cref="StorytellerInspector"/> or <see cref="OghamTemplateSpawner"/> component tracks.</summary>
+    public enum StoryTarget
+    {
+        /// <summary>Track whichever story is currently set as the main story in <see cref="Storyteller"/>.</summary>
+        Main,
+        /// <summary>Track the specific story identified by a dot-path tag.</summary>
+        Specific
+    }
 
-    // Inspector bridge for the Storyteller system.
-    // Subscribe to its UnityEvents and wire its public methods to UI buttons without writing code.
-    // StoryTarget.Main filters to whichever story is currently set as main.
-    // StoryTarget.Specific filters to the story identified by StoryTagPath.
+    /// <summary>
+    /// Inspector bridge for the Ogham Storyteller system. Subscribe to its UnityEvents and wire its public
+    /// methods to UI buttons in the Inspector without writing code. <see cref="StoryTarget.Main"/> filters
+    /// events to whichever story is currently set as main; <see cref="StoryTarget.Specific"/> filters to the
+    /// story identified by its dot-path tag.
+    /// </summary>
     public class StorytellerInspector : MonoBehaviour
     {
         [SerializeField] private StoryTarget _target = StoryTarget.Main;
@@ -36,8 +44,11 @@ namespace Heathen.Ogham
             Storyteller.OnClosed  -= HandleClosed;
         }
 
-        // ── Inspector-wirable methods ─────────────────────────────────────────
-
+        /// <summary>
+        /// Starts a conversation at the entry identified by <paramref name="nodeTagPath"/> in the tracked story.
+        /// Wire this to a UI button's <c>OnClick</c> event in the Inspector.
+        /// </summary>
+        /// <param name="nodeTagPath">The dot-path GameplayTag of the entry to enter.</param>
         public void Enter(string nodeTagPath)
         {
             var nodeTag = GameplayTag.FromName(nodeTagPath);
@@ -47,6 +58,11 @@ namespace Heathen.Ogham
                 Storyteller.Enter(nodeTag);
         }
 
+        /// <summary>
+        /// Selects the option identified by <paramref name="optionTagPath"/> in the tracked story.
+        /// Wire this to a UI button's <c>OnClick</c> event in the Inspector.
+        /// </summary>
+        /// <param name="optionTagPath">The dot-path GameplayTag of the option to select.</param>
         public void Choose(string optionTagPath)
         {
             var optionTag = GameplayTag.FromName(optionTagPath);
@@ -56,6 +72,9 @@ namespace Heathen.Ogham
                 Storyteller.Choose(optionTag);
         }
 
+        /// <summary>
+        /// Closes the active conversation in the tracked story. Wire this to a UI button in the Inspector.
+        /// </summary>
         public void Close()
         {
             if (IsSpecific())

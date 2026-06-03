@@ -3,36 +3,18 @@ using Heathen.GameplayTags;
 
 namespace Heathen.Ogham
 {
-    // Converts raw Ogham authoring text to styled TMPro markup.
-    // All visual formatting is supplied by the caller via format-string templates
-    // where {%} is replaced with the plain display text of the link.
-    //
-    // Format templates use {%} as the placeholder for the display text.
-    // {%} is chosen over bare % to avoid collision with percent signs in real content.
-    // Reference the constant OghamLinkFormatter.Token rather than hard-coding the string.
-    //
-    // Example templates:
-    //   activeFormat   = "<color=#4A9EFF><u>{%}</u></color>"
-    //   inactiveFormat = "<color=#808080><s>{%}</s></color>"
-    //   customExample  = "<b><color=white>1): </color></b><color=blue><u>{%}</u></color>"
-    //
-    // Usage — full node text (e.g. in Storyteller.OnEntered):
-    //   tmpText.text = OghamLinkFormatter.Format(node.GetText(0), node,
-    //       activeFormat:   "<color=#4A9EFF><u>{%}</u></color>",
-    //       inactiveFormat: "<color=#808080><s>{%}</s></color>");
-    //
-    // Usage — individual option label (e.g. populating a button):
-    //   btn.label.text = option.GetFormattedLabel(
-    //       validFormat:   "<color=#4A9EFF>{%}</color>",
-    //       invalidFormat: "<color=#808080>{%}</color>");
-    //
-    // Usage — TMPro OnPointerClick handler:
-    //   var option = OghamLinkFormatter.FindOption(linkInfo.GetLinkID(), node);
-    //   if (option != null && option.IsActive) option.Choose();
+    /// <summary>
+    /// Converts raw Ogham authoring text to styled TMPro markup, applying active and inactive format templates
+    /// to each <c>Ogham://</c> inline link based on whether the matching <see cref="StoryOption"/> is currently active.
+    /// All visual formatting is supplied by the caller via format-string templates where <see cref="Token"/>
+    /// is replaced with the clean display text.
+    /// </summary>
     public static class OghamLinkFormatter
     {
-        // Placeholder token inside format strings. Replaced with the clean display text.
-        // Use this constant instead of the literal string to avoid typos.
+        /// <summary>
+        /// The placeholder token used inside format-string templates. Replaced with the clean display text
+        /// of each inline link. Use this constant instead of a literal string to avoid typos.
+        /// </summary>
         public const string Token = "{%}";
 
         // Matches already-compiled <link="Ogham://tag">display</link> tags produced by
@@ -45,17 +27,17 @@ namespace Heathen.Ogham
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant |
                 System.Text.RegularExpressions.RegexOptions.Singleline);
 
-        // Convert raw authoring text to TMPro markup.
-        // Each Ogham:// link is wrapped in <link="Ogham://...">FORMATTED_DISPLAY</link>.
-        // The display text is extracted from the authoring syntax, stripped of any existing
-        // markup, then substituted for {%} in the appropriate format template.
-        //
-        // Outcomes per link:
-        //   IsActive  true  → <link="...">activeFormat  .Replace("{%}", display)</link>
-        //   IsActive  false → <link="...">inactiveFormat.Replace("{%}", display)</link>
-        //   not found       → inactiveFormat applied, no <link> tag (authoring error)
-        //
-        // Non-Ogham links (no Ogham:// prefix) pass through as plain <link="tag">display</link>.
+        /// <summary>
+        /// Converts raw authoring text to styled TMPro markup, applying <paramref name="activeFormat"/> or
+        /// <paramref name="inactiveFormat"/> to each <c>Ogham://</c> inline link based on the matching
+        /// <see cref="StoryOption.IsActive"/> value. Non-Ogham links pass through unchanged.
+        /// Call <see cref="InterpolateState"/> before this method to expand any <c>@@TagPath()</c> tokens first.
+        /// </summary>
+        /// <param name="rawText">The raw authoring text containing Ogham inline-link syntax.</param>
+        /// <param name="node">The current <see cref="StoryNode"/> used to resolve option states. May be <c>null</c>.</param>
+        /// <param name="activeFormat">TMPro template applied to active links; use <see cref="Token"/> as placeholder.</param>
+        /// <param name="inactiveFormat">TMPro template applied to inactive or unresolved links; use <see cref="Token"/> as placeholder.</param>
+        /// <returns>The text with all authoring markers replaced by styled TMPro markup.</returns>
         public static string Format(
             string    rawText,
             StoryNode node,
@@ -118,9 +100,14 @@ namespace Heathen.Ogham
             return text;
         }
 
-        // Find the StoryOption that owns a TMPro link ID (e.g. "Ogham://Hub.GoNorth").
-        // Returns null when the link is not an Ogham:// link or the option is not on this node.
-        // Searches AllOptions so inactive options are also found.
+        /// <summary>
+        /// Finds the <see cref="StoryOption"/> on <paramref name="node"/> that owns the given TMPro link ID.
+        /// Searches <see cref="StoryNode.AllOptions"/> so inactive options are also found.
+        /// Returns <c>null</c> when the link ID is not an Ogham scheme link or no matching option exists.
+        /// </summary>
+        /// <param name="linkId">The TMPro link ID string, for example <c>"Ogham://Hub.GoNorth"</c>.</param>
+        /// <param name="node">The current story node whose options are searched.</param>
+        /// <returns>The matching <see cref="StoryOption"/>, or <c>null</c>.</returns>
         public static StoryOption FindOption(string linkId, StoryNode node)
         {
             if (node == null || !OghamInlineLinkParser.IsOghamLink(linkId))
@@ -135,18 +122,23 @@ namespace Heathen.Ogham
             return null;
         }
 
-        // True when the Ogham:// link maps to an active option on this node.
+        /// <summary>
+        /// Returns <c>true</c> when the <c>Ogham://</c> link ID maps to an active option on the given node.
+        /// </summary>
+        /// <param name="linkId">The TMPro link ID to test.</param>
+        /// <param name="node">The current story node whose options are searched.</param>
+        /// <returns><c>true</c> if the matching option exists and <see cref="StoryOption.IsActive"/> is <c>true</c>.</returns>
         public static bool IsLinkActive(string linkId, StoryNode node) =>
             FindOption(linkId, node)?.IsActive == true;
 
-        // ── StoryOption extension ─────────────────────────────────────────────
-
-        // Returns the option's display text formatted via the supplied template.
-        // Strips any existing markup from the raw label before substituting {%}.
-        //
-        //   option.GetFormattedLabel(
-        //       "<color=#4A9EFF><u>{%}</u></color>",
-        //       "<color=#808080><s>{%}</s></color>");
+        /// <summary>
+        /// Extension method. Returns the option's display text formatted via the supplied template, stripping any
+        /// existing markup from the raw label before substituting <see cref="Token"/>.
+        /// </summary>
+        /// <param name="option">The option whose display text is formatted.</param>
+        /// <param name="validFormat">Template applied when <see cref="StoryOption.IsActive"/> is <c>true</c>.</param>
+        /// <param name="invalidFormat">Template applied when <see cref="StoryOption.IsActive"/> is <c>false</c>.</param>
+        /// <returns>The formatted display string.</returns>
         public static string GetFormattedLabel(
             this StoryOption option,
             string           validFormat,
@@ -157,19 +149,14 @@ namespace Heathen.Ogham
             return (fmt ?? clean).Replace(Token, clean);
         }
 
-        // ── State variable interpolation ──────────────────────────────────────
-
-        // Substitutes @@TagPath() and @@TagPath(format) tokens with narrative-state values.
-        //
-        // Syntax:
-        //   @@Tag.Path()          → state.GetValue(Tag.Path).ToString()
-        //   @@Tag.Path(0.00'€')   → state.GetValue(Tag.Path).ToString("0.00'€'")
-        //
-        // Parentheses are always required — the '(' terminates the tag path so tokens can
-        // be embedded adjacent to letters or digits without ambiguity (e.g. @@Tag()kg).
-        // The format string is any standard .NET numeric format string. Values are ulong.
-        // Unrecognised tags (not in state) resolve to 0.
-        // Call this before Format() so variables are expanded before link markup runs.
+        /// <summary>
+        /// Substitutes <c>@@TagPath()</c> and <c>@@TagPath(format)</c> tokens in the text with the corresponding
+        /// narrative-state values from <paramref name="state"/>. Unrecognised tags resolve to 0.
+        /// Call this method before <see cref="Format"/> so variable values are expanded before link markup runs.
+        /// </summary>
+        /// <param name="text">The raw text that may contain <c>@@TagPath(format)</c> tokens.</param>
+        /// <param name="state">The <see cref="GameplayTagCollection"/> holding the current narrative state values.</param>
+        /// <returns>The text with all state-variable tokens replaced by their resolved values.</returns>
         public static string InterpolateState(string text, GameplayTagCollection state)
         {
             if (string.IsNullOrEmpty(text) || state == null) return text;

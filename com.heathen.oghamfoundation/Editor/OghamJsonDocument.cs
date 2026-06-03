@@ -9,57 +9,25 @@ using Heathen.Lexicon;
 
 namespace Heathen.Ogham.Editor
 {
-    // Bidirectional adapter between .ogham JSON source files and Unity runtime objects.
-    //
-    // Reading paths:
-    //   ToOghamData()     — authoring format (Markdown inline links preserved, for graph editor)
-    //   ToMetadata()      — OghamGraphMetadata from _editor block
-    //   ToCompiledData()  — runtime format (inline links → TMPro, pure links dropped, for OghamImporter)
-    //
-    // Writing path:
-    //   SyncFrom(data, meta) — update entries[] and _editor from in-memory objects
-    //   ToJson()             — serialize back to .ogham JSON
-    //
-    // .ogham format (superset of O3DE's .ogmcon):
-    // {
-    //   "storyTag": "Stories.MainQuest",
-    //   "entries": [
-    //     {
-    //       "tag": "Stories.MainQuest.Intro",
-    //       "parentTag": "Stories.MainQuest",          // optional
-    //       "contentKeys": [                            // OR legacy "dataKeys"/"textKeys"
-    //         {"type": "Text", "mode": "Localised", "key": "Dialogue.Intro"},
-    //         {"type": "Text", "mode": "Literal",   "key": "Hello [world](Ogham://Option.Tag)!"}
-    //       ],
-    //       "entryOperations": [...],
-    //       "options": [
-    //         {
-    //           "tag":        "Stories.MainQuest.Intro.Accept",
-    //           "targetTag":  "Stories.MainQuest.Accept",  // empty = close conversation
-    //           "textKey":    "Accept",                     // string = Literal; obj = {mode, key}
-    //           "textMode":   "Literal",                   // optional with string textKey
-    //           "conditions": [...],
-    //           "operations": [...]
-    //         }
-    //       ]
-    //     }
-    //   ],
-    //   "localisations": [{"culture":"en","key":"Dialogue.Intro","value":"Hello!"}],
-    //   "assets": [{"lexiconKey":"Art.Portrait","source":"Assets/Sprites/NPC.png","culture":""}],
-    //   "_editor": {
-    //     "viewTransform": [0,0,1],
-    //     "labels": [{"id":1,"name":"Important","color":"#FF0000"}],
-    //     "nodes": [{"tag":"...","position":[x,y,w,h],"label":"","labelColor":"#FFFFFF",...}]
-    //   }
-    // }
+    /// <summary>
+    /// Bidirectional adapter between <c>.ogham</c> JSON source files and Unity runtime objects.
+    /// Supports three reading paths: <see cref="ToOghamData"/> (authoring format, Markdown links preserved),
+    /// <see cref="ToMetadata"/> (<see cref="OghamGraphMetadata"/> from the <c>_editor</c> block), and
+    /// <see cref="ToCompiledData"/> (runtime format with inline links converted to TMPro markup).
+    /// The writing path is <see cref="SyncFrom"/> followed by <see cref="ToJson"/>.
+    /// </summary>
     public class OghamJsonDocument
     {
         private JObject _root;
 
         private OghamJsonDocument(JObject root) => _root = root;
 
-        // ── Factory ───────────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Parses a JSON string and returns an <see cref="OghamJsonDocument"/>. Returns a document with an empty
+        /// root object when the JSON is null, empty, or malformed.
+        /// </summary>
+        /// <param name="json">The JSON string to parse.</param>
+        /// <returns>A new <see cref="OghamJsonDocument"/> backed by the parsed root object.</returns>
         public static OghamJsonDocument Parse(string json)
         {
             try
@@ -73,6 +41,11 @@ namespace Heathen.Ogham.Editor
             }
         }
 
+        /// <summary>
+        /// Creates a new <see cref="OghamJsonDocument"/> with an empty entries array and an optional story tag.
+        /// </summary>
+        /// <param name="storyTag">The dot-path story tag to write into the document's <c>storyTag</c> field.</param>
+        /// <returns>A new, empty <see cref="OghamJsonDocument"/>.</returns>
         public static OghamJsonDocument CreateNew(string storyTag = "")
         {
             var root = new JObject
@@ -83,12 +56,14 @@ namespace Heathen.Ogham.Editor
             return new OghamJsonDocument(root);
         }
 
-        // ── Properties ────────────────────────────────────────────────────────
-
+        /// <summary>The dot-path story tag read from the document's <c>storyTag</c> field.</summary>
         public string StoryTag => _root["storyTag"]?.Value<string>() ?? string.Empty;
 
-        // ── Read → OghamData (authoring format) ───────────────────────────────
-
+        /// <summary>
+        /// Converts the document to an authoring <see cref="OghamData"/> object with Markdown inline links preserved.
+        /// Use this path in the graph editor. The returned instance is a synthetic ScriptableObject (not in AssetDatabase).
+        /// </summary>
+        /// <returns>A new <see cref="OghamData"/> populated from the document's entries.</returns>
         public OghamData ToOghamData()
         {
             var data = ScriptableObject.CreateInstance<OghamData>();
@@ -112,8 +87,11 @@ namespace Heathen.Ogham.Editor
             return data;
         }
 
-        // ── Read → OghamGraphMetadata ─────────────────────────────────────────
-
+        /// <summary>
+        /// Converts the document's <c>_editor</c> block to an <see cref="OghamGraphMetadata"/> object containing
+        /// the graph editor view state, label definitions, and per-node layout data.
+        /// </summary>
+        /// <returns>A new <see cref="OghamGraphMetadata"/> populated from the <c>_editor</c> block.</returns>
         public OghamGraphMetadata ToMetadata()
         {
             var meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
@@ -146,8 +124,11 @@ namespace Heathen.Ogham.Editor
             return meta;
         }
 
-        // ── Read → OghamCompiledData (runtime format, TMPro markup) ───────────
-
+        /// <summary>
+        /// Converts the document to an <see cref="OghamCompiledData"/> runtime asset, converting inline links
+        /// to TMPro markup and dropping pure-link content keys. Used by <see cref="OghamImporter"/>.
+        /// </summary>
+        /// <returns>A new <see cref="OghamCompiledData"/> ready for use at runtime.</returns>
         public OghamCompiledData ToCompiledData()
         {
             var compiled = ScriptableObject.CreateInstance<OghamCompiledData>();
@@ -167,19 +148,25 @@ namespace Heathen.Ogham.Editor
             return compiled;
         }
 
-        // ── Write from in-memory state ────────────────────────────────────────
-
-        // Syncs entries[] and _editor from live objects. Preserves storyTag/localisations/assets.
+        /// <summary>
+        /// Updates the document's <c>entries</c> array and <c>_editor</c> block from the given live objects.
+        /// Preserves the <c>storyTag</c>, <c>localisations</c>, and <c>assets</c> fields. Call <see cref="ToJson"/>
+        /// afterwards to serialise the updated document to disk.
+        /// </summary>
+        /// <param name="data">The live authoring data to write. Ignored when <c>null</c>.</param>
+        /// <param name="meta">The live graph metadata to write. Ignored when <c>null</c>.</param>
         public void SyncFrom(OghamData data, OghamGraphMetadata meta)
         {
             if (data != null) _root["entries"] = BuildEntriesArray(data.Entries);
             if (meta != null) _root["_editor"] = BuildEditorBlock(meta);
         }
 
+        /// <summary>Sets the <c>storyTag</c> field in the document to the given dot-path string.</summary>
+        /// <param name="storyTag">The new story tag dot-path value.</param>
         public void SetStoryTag(string storyTag) => _root["storyTag"] = storyTag;
 
-        // ── Serialize ─────────────────────────────────────────────────────────
-
+        /// <summary>Serialises the document back to indented JSON, suitable for writing to a <c>.ogham</c> file.</summary>
+        /// <returns>The formatted JSON string.</returns>
         public string ToJson() => _root.ToString(Formatting.Indented);
 
         // ── Parse helpers ─────────────────────────────────────────────────────
@@ -349,9 +336,12 @@ namespace Heathen.Ogham.Editor
             return result.ToArray();
         }
 
-        // ── Tag and localisation accessors (for OghamImporter / InitializeOnLoad) ─
-
-        // All dot-path tag strings referenced anywhere in this document.
+        /// <summary>
+        /// Returns an enumerable of all dot-path tag strings referenced anywhere in this document, including
+        /// the story tag, entry tags, option tags, target tags, and condition/operation tags.
+        /// Used by <see cref="OghamImporter"/> and <see cref="OghamImporterRefresh"/> to pre-register tags.
+        /// </summary>
+        /// <returns>A de-duplicated set of tag path strings.</returns>
         public IEnumerable<string> GetAllTagPaths()
         {
             var paths = new HashSet<string>(StringComparer.Ordinal);
@@ -363,6 +353,11 @@ namespace Heathen.Ogham.Editor
             return paths;
         }
 
+        /// <summary>
+        /// Returns all inline localisation entries from the document's <c>localisations</c> array.
+        /// Used by <see cref="OghamImporterRefresh"/> to inject strings into <see cref="Heathen.Lexicon.LexiconRegistry"/> on editor load.
+        /// </summary>
+        /// <returns>An array of <see cref="OghamCompiledLocale"/> values, or an empty array when none are defined.</returns>
         public OghamCompiledLocale[] GetLocalisations() => ParseLocalisations();
 
         private static void CollectEntryTagPaths(JObject eo, HashSet<string> paths)

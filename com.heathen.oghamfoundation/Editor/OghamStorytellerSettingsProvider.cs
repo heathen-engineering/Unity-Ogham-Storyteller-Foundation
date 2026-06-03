@@ -4,6 +4,11 @@ using UnityEngine;
 
 namespace Heathen.Ogham.Editor
 {
+    /// <summary>
+    /// Project Settings page for the Ogham Storyteller VO export configuration. Registered under
+    /// <c>Project/Ogham Storyteller</c>. Allows the user to define and reorder content label names and
+    /// access director notes guidance.
+    /// </summary>
     public class OghamStorytellerSettingsProvider : SettingsProvider
     {
         private OghamStorytellerMetadata _meta;
@@ -16,6 +21,8 @@ namespace Heathen.Ogham.Editor
             alignment = TextAnchor.MiddleLeft,
         };
 
+        /// <summary>Registers this provider in the Project Settings window under <c>Project/Ogham Storyteller</c>.</summary>
+        /// <returns>A new <see cref="OghamStorytellerSettingsProvider"/> registered at the expected path.</returns>
         [SettingsProvider]
         public static SettingsProvider Create() =>
             new OghamStorytellerSettingsProvider("Project/Ogham Storyteller", SettingsScope.Project)
@@ -24,14 +31,21 @@ namespace Heathen.Ogham.Editor
                     new[] { "ogham", "storyteller", "voice", "over", "script", "labels", "heathen" }),
             };
 
+        /// <summary>
+        /// Initialises the settings provider at the given path and scope.
+        /// </summary>
+        /// <param name="path">The settings window path, e.g. "Project/Ogham Storyteller".</param>
+        /// <param name="scope">The scope of these settings (Project or User).</param>
         public OghamStorytellerSettingsProvider(string path, SettingsScope scope)
             : base(path, scope) { }
 
+        /// <inheritdoc/>
         public override void OnActivate(string searchContext, UnityEngine.UIElements.VisualElement rootElement)
         {
             _meta = OghamStorytellerMetadata.GetOrCreate();
         }
 
+        /// <inheritdoc/>
         public override void OnGUI(string searchContext)
         {
             if (_meta == null) _meta = OghamStorytellerMetadata.GetOrCreate();

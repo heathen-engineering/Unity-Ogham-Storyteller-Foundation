@@ -2,8 +2,11 @@ using Heathen.GameplayTags;
 
 namespace Heathen.Ogham
 {
-    // Developer-facing wrapper around a single dialogue option.
-    // Call Choose() to advance the conversation; wire it directly to a UI button's onClick.
+    /// <summary>
+    /// Immutable developer-facing wrapper around a single dialogue option, produced by <see cref="OghamStory"/> when
+    /// a node is entered. Call <see cref="Choose"/> to advance the conversation; this method can be wired directly
+    /// to a UI button's <c>onClick</c> event without requiring a reference to <see cref="Storyteller"/>.
+    /// </summary>
     public sealed class StoryOption
     {
         private readonly DialogueOption _option;
@@ -15,23 +18,30 @@ namespace Heathen.Ogham
             _story  = story;
         }
 
+        /// <summary>The GameplayTag that uniquely identifies this option.</summary>
         public GameplayTag Tag       => _option.ResolvedTag;
+        /// <summary>The GameplayTag of the dialogue entry this option navigates to, or a default tag when it closes the conversation.</summary>
         public GameplayTag TargetTag => _option.ResolvedTargetEntry;
+        /// <summary>Returns <c>true</c> when this option has a non-empty navigation target.</summary>
         public bool        HasTarget => _option.ResolvedTargetEntry.Id != 0;
 
-        // True when this option's conditions are satisfied at the moment this node was entered.
-        // False means the option exists but is currently gated (visible but not actionable).
-        // Use this to style inline links differently depending on whether the player can take them.
+        /// <summary>
+        /// <c>true</c> when this option's conditions were satisfied at the moment the current node was entered.
+        /// <c>false</c> means the option exists but is currently gated. Use this to style inline links
+        /// differently depending on whether the player can take them.
+        /// </summary>
         public bool IsActive { get; internal set; } = true;
 
+        /// <summary>Returns the resolved display text for this option's label.</summary>
+        /// <returns>The resolved display string.</returns>
         public string GetText() => _option.TextKey.Resolve();
 
-        // Advance the conversation by selecting this option.
-        // Safe to wire directly to a UI button — no Storyteller reference required.
-        // Returns false silently when IsActive is false.
+        /// <summary>
+        /// Advances the conversation by selecting this option, applying its operations, and navigating to its target.
+        /// Safe to wire directly to a UI button. Silently does nothing when <see cref="IsActive"/> is <c>false</c>.
+        /// </summary>
         public void Choose() => _story.Choose(_option.ResolvedTag);
 
-        // Internal access for OghamStory to read operations and navigation target.
         internal DialogueOption RawOption => _option;
     }
 }

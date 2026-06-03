@@ -5,51 +5,74 @@ using System.Text.RegularExpressions;
 
 namespace Heathen.Ogham
 {
-    // Parses and converts the Ogham inline-link dialect used in Text ContentKeys.
-    //
-    // Authoring syntax:
-    //   [display text](Tag.Path)  — link with explicit target
-    //   [display text]            — link with no target (author wires later)
-    //   **text**                  — bold
-    //   *text*                    — italic
-    //
-    // At compile time, ToTMProMarkup() converts authoring syntax to TMPro <link> / <b> / <i> tags.
-    // At edit time, StripMarkup() produces a clean plain-text preview.
+    /// <summary>
+    /// Parses and converts the Ogham inline-link authoring dialect used in Text ContentKeys.
+    /// At compile time, <see cref="ToTMProMarkup"/> converts authoring syntax to TMPro markup.
+    /// At edit time, <see cref="StripMarkup"/> produces a clean plain-text preview.
+    /// Authoring syntax: <c>[display](Ogham://Tag.Path)</c> for story links, <c>**text**</c> for bold,
+    /// and <c>*text*</c> for italic.
+    /// </summary>
     public static class OghamInlineLinkParser
     {
-        // Protocol prefix used to identify links that map to a StoryOption tag.
-        // [display](Ogham://My.Option.Tag) → resolves via node.AllOptions, styled per IsActive.
+        /// <summary>
+        /// Protocol prefix used to identify links that map to a <see cref="StoryOption"/> tag.
+        /// For example, <c>[Go North](Ogham://Hub.GoNorth)</c> resolves via <see cref="StoryNode.AllOptions"/> at runtime.
+        /// </summary>
         public const string OghamScheme = "Ogham://";
 
-        // [display](tag)  —  group 1 = display, group 2 = tag (may be null/empty)
+        /// <summary>
+        /// Compiled regex that matches the authoring link syntax <c>[display](tag)</c>.
+        /// Group 1 captures the display text; group 2 captures the tag URL (may be absent).
+        /// </summary>
         public static readonly Regex LinkRx = new Regex(
             @"\[([^\]]*)\](?:\(([^)]*)\))?",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-        // Entire trimmed string is a single link (pure link)
         private static readonly Regex PureLinkRx = new Regex(
             @"^\[([^\]]*)\](?:\(([^)]*)\))?$",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-        // Bold before italic to avoid double-asterisk collisions
-        public static readonly Regex BoldRx   = new Regex(@"\*\*([^*]+)\*\*",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
-        public static readonly Regex ItalicRx = new Regex(@"\*([^*]+)\*",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        
         private static readonly Regex RichTagRx = new Regex(@"<[^>]+>",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        
+        /// <summary>
+        /// Compiled regex that matches <c>**text**</c> bold spans. Applied before
+        /// <see cref="ItalicRx"/> to avoid double-asterisk collisions.
+        /// </summary>
+        public static readonly Regex BoldRx   = new Regex(@"\*\*([^*]+)\*\*",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        /// <summary>
+        /// Compiled regex that matches <c>*text*</c> italic spans. Applied after
+        /// <see cref="BoldRx"/> to avoid double-asterisk collisions.
+        /// </summary>
+        public static readonly Regex ItalicRx = new Regex(@"\*([^*]+)\*",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-        // True when a TMPro link ID (the value of <link="..."/>) uses the Ogham option protocol.
+        /// <summary>
+        /// Returns <c>true</c> when a TMPro link ID uses the Ogham option protocol (i.e. starts with <see cref="OghamScheme"/>).
+        /// </summary>
+        /// <param name="linkId">The link ID string from a TMPro <c>&lt;link="..."&gt;</c> tag.</param>
+        /// <returns><c>true</c> if the ID begins with the Ogham scheme prefix; otherwise <c>false</c>.</returns>
         public static bool IsOghamLink(string linkId) =>
             linkId != null && linkId.StartsWith(OghamScheme, StringComparison.Ordinal);
 
-        // Strips the Ogham:// prefix to yield the raw GameplayTag dot-path.
-        // Call after IsOghamLink returns true.
+        /// <summary>
+        /// Strips the <see cref="OghamScheme"/> prefix and returns the raw GameplayTag dot-path.
+        /// Call only after <see cref="IsOghamLink"/> returns <c>true</c>.
+        /// </summary>
+        /// <param name="oghamLinkId">A link ID string that begins with the Ogham scheme.</param>
+        /// <returns>The dot-path tag string without the Ogham prefix, or an empty string if the input is <c>null</c>.</returns>
         public static string GetTagPath(string oghamLinkId) =>
             oghamLinkId is null ? string.Empty : oghamLinkId.Substring(OghamScheme.Length);
 
-        // Returns true if the entire trimmed text is one [display](tag) span.
-        // Outputs the display text and the tag path (tag may be empty string).
+        /// <summary>
+        /// Returns <c>true</c> if the entire trimmed text is a single <c>[display](tag)</c> span.
+        /// The display text and tag path are written to the output parameters; tag may be an empty string.
+        /// </summary>
+        /// <param name="text">The raw authoring text to test.</param>
+        /// <param name="display">Receives the display text of the link, or an empty string.</param>
+        /// <param name="tag">Receives the tag URL of the link, or an empty string.</param>
+        /// <returns><c>true</c> when the entire string is a single link span; <c>false</c> otherwise.</returns>
         public static bool IsPureLink(string text, out string display, out string tag)
         {
             display = tag = string.Empty;
@@ -61,7 +84,11 @@ namespace Heathen.Ogham
             return true;
         }
 
-        // Returns all [display](tag) pairs found anywhere in the text.
+        /// <summary>
+        /// Returns all <c>[display](tag)</c> pairs found anywhere in the text, including those with no tag.
+        /// </summary>
+        /// <param name="text">The raw authoring text to scan.</param>
+        /// <returns>A list of (display, tag) tuples; tag may be an empty string when absent.</returns>
         public static List<(string display, string tag)> ExtractLinks(string text)
         {
             var result = new List<(string, string)>();
@@ -75,11 +102,12 @@ namespace Heathen.Ogham
             return result;
         }
 
-        // Converts authoring syntax to TMPro markup.
-        // [display](tag) → <link="tag">display</link>
-        // [display]      → <link="">display</link>
-        // **text**       → <b>text</b>
-        // *text*         → <i>text</i>
+        /// <summary>
+        /// Converts authoring syntax to TMPro-compatible markup. Bold and italic markers are converted first;
+        /// link spans become <c>&lt;link="tag"&gt;display&lt;/link&gt;</c> tags.
+        /// </summary>
+        /// <param name="text">The raw authoring text using Ogham inline-link syntax.</param>
+        /// <returns>The text with all authoring markers replaced by TMPro markup tags.</returns>
         public static string ToTMProMarkup(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -99,7 +127,12 @@ namespace Heathen.Ogham
             return text;
         }
 
-        // Strips all authoring markup and basic TMPro rich-text tags, returning plain preview text.
+        /// <summary>
+        /// Strips all authoring markup (bold/italic markers, link wrappers) and basic TMPro rich-text tags,
+        /// returning clean plain-text suitable for preview display or search.
+        /// </summary>
+        /// <param name="text">The raw or partially-converted text to strip.</param>
+        /// <returns>Plain text with all markup removed.</returns>
         public static string StripMarkup(string text)
         {
             if (string.IsNullOrEmpty(text)) return text;
@@ -117,9 +150,13 @@ namespace Heathen.Ogham
             return text;
         }
 
-        // Converts a display string to a valid tag-path segment (PascalCase, alphanumeric only).
-        // "go north"         → "GoNorth"
-        // "talk to the guard" → "TalkToTheGuard"
+        /// <summary>
+        /// Converts a display string to a valid GameplayTag path segment using PascalCase with alphanumeric
+        /// characters only. For example, "go north" becomes "GoNorth" and "talk to the guard" becomes "TalkToTheGuard".
+        /// Returns "Link" when the result would be empty.
+        /// </summary>
+        /// <param name="display">The human-readable display text to normalise.</param>
+        /// <returns>A PascalCase, alphanumeric tag segment string of at most 32 characters.</returns>
         public static string NormaliseForTag(string display)
         {
             if (string.IsNullOrWhiteSpace(display)) return "Link";

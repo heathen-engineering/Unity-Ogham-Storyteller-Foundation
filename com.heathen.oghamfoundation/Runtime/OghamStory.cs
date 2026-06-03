@@ -7,10 +7,12 @@ using Unity.Collections;
 
 namespace Heathen.Ogham
 {
-    // A named story instance: owns graph index, narrative state, and conversation history.
-    // Multiple OghamStory instances can coexist; Storyteller manages the collection.
-    // The graph (entry/child index) is immutable after data registration.
-    // The session (state, history, current entry) is swappable via Restore().
+    /// <summary>
+    /// A named story instance that owns the graph index, narrative state, and conversation history for a single story.
+    /// Multiple <see cref="OghamStory"/> instances can coexist; <see cref="Storyteller"/> manages the collection.
+    /// The graph (entry and child index) is rebuilt on data registration. The session state, history, and
+    /// current entry can be swapped atomically via <see cref="Restore"/>.
+    /// </summary>
     public class OghamStory
     {
         private readonly List<OghamData>         _assets         = new();
@@ -28,28 +30,55 @@ namespace Heathen.Ogham
         private IReadOnlyList<StoryOption> _currentOptions    = Array.Empty<StoryOption>();
         private IReadOnlyList<StoryOption> _currentAllOptions = Array.Empty<StoryOption>();
 
+        /// <summary>The GameplayTag that uniquely identifies this story within the <see cref="Storyteller"/> registry.</summary>
         public GameplayTag                     Id                { get; }
+        /// <summary>Returns <c>true</c> when a conversation is in progress and an entry has been entered.</summary>
         public bool                            IsActive          => _isActive;
+        /// <summary>The <see cref="StoryNode"/> for the currently active dialogue entry, or <c>null</c> when no conversation is active.</summary>
         public StoryNode                       CurrentNode       => _currentNode;
+        /// <summary>Options for the current node whose conditions are satisfied. Use this to populate button lists.</summary>
         public IReadOnlyList<StoryOption>      CurrentOptions    => _currentOptions;
-        // All options for the current node, including those whose conditions are not met.
-        // IsActive is false on gated options. Use this to style inline Ogham:// links.
+        /// <summary>
+        /// All options for the current node, including those whose conditions are not met.
+        /// <see cref="StoryOption.IsActive"/> is <c>false</c> on gated options. Use this to style inline <c>Ogham://</c> links.
+        /// </summary>
         public IReadOnlyList<StoryOption>      CurrentAllOptions => _currentAllOptions;
+        /// <summary>The live narrative-state collection for this story, updated by entry and option operations.</summary>
         public GameplayTagCollection           NarrativeState    => _state;
+        /// <summary>The ordered history of entries visited and options chosen during this session.</summary>
         public IReadOnlyList<HistoryEntry>     History           => _history;
 
-        // StoryId is the first parameter on every event so listeners can distinguish origin.
+        /// <summary>
+        /// Raised when the story enters a new dialogue node. The first parameter is this story's <see cref="Id"/>
+        /// so listeners subscribed to multiple stories can distinguish the origin.
+        /// </summary>
         public event Action<GameplayTag, StoryNode>   OnEntered;
+        /// <summary>
+        /// Raised when an option is selected, before navigation to the next node.
+        /// The first parameter is this story's <see cref="Id"/>.
+        /// </summary>
         public event Action<GameplayTag, StoryOption> OnChoice;
+        /// <summary>
+        /// Raised when the conversation ends, whether normally or interrupted.
+        /// The first parameter is this story's <see cref="Id"/>; the second indicates whether it was interrupted.
+        /// </summary>
         public event Action<GameplayTag, bool>        OnClosed;
 
+        /// <summary>
+        /// Initialises a new story with the given identity tag. Register this instance with
+        /// <see cref="Storyteller.RegisterStory(OghamStory, bool)"/> to expose it to the global event system.
+        /// </summary>
+        /// <param name="id">The GameplayTag that uniquely identifies this story.</param>
         public OghamStory(GameplayTag id)
         {
             Id = id;
         }
 
-        // ── Asset registration ────────────────────────────────────────────────
-
+        /// <summary>
+        /// Registers an <see cref="OghamData"/> authoring asset with this story and rebuilds the graph index.
+        /// Duplicate registrations are silently ignored.
+        /// </summary>
+        /// <param name="data">The authoring asset to add; <c>null</c> is silently ignored.</param>
         public void RegisterData(OghamData data)
         {
             if (data == null || _assets.Contains(data)) return;
@@ -57,6 +86,11 @@ namespace Heathen.Ogham
             RebuildIndex();
         }
 
+        /// <summary>
+        /// Registers an <see cref="OghamCompiledData"/> runtime asset with this story and rebuilds the graph index.
+        /// Duplicate registrations are silently ignored.
+        /// </summary>
+        /// <param name="data">The compiled asset to add; <c>null</c> is silently ignored.</param>
         public void RegisterData(OghamCompiledData data)
         {
             if (data == null || _compiledAssets.Contains(data)) return;
@@ -64,16 +98,27 @@ namespace Heathen.Ogham
             RebuildIndex();
         }
 
+        /// <summary>
+        /// Removes a previously registered <see cref="OghamData"/> authoring asset and rebuilds the graph index.
+        /// </summary>
+        /// <param name="data">The authoring asset to remove.</param>
         public void UnregisterData(OghamData data)
         {
             if (_assets.Remove(data)) RebuildIndex();
         }
 
+        /// <summary>
+        /// Removes a previously registered <see cref="OghamCompiledData"/> runtime asset and rebuilds the graph index.
+        /// </summary>
+        /// <param name="data">The compiled asset to remove.</param>
         public void UnregisterData(OghamCompiledData data)
         {
             if (_compiledAssets.Remove(data)) RebuildIndex();
         }
 
+        /// <summary>
+        /// Removes all registered data assets and clears the graph index. The story becomes empty until new data is registered.
+        /// </summary>
         public void UnregisterAll()
         {
             _assets.Clear();
@@ -83,9 +128,11 @@ namespace Heathen.Ogham
             _childIndex.Clear();
         }
 
-        // ── Runtime entry registration ────────────────────────────────────────
-
-        // Register a single entry created at runtime (e.g. from a mod or UGC manifest).
+        /// <summary>
+        /// Registers a single runtime-created <see cref="DialogueEntry"/> (for example, from a mod or UGC manifest)
+        /// and rebuilds the graph index. Entries with no valid tag or that are already registered are silently ignored.
+        /// </summary>
+        /// <param name="entry">The runtime entry to register.</param>
         public void RegisterEntry(DialogueEntry entry)
         {
             if (entry == null || entry.ResolvedTag.Id == 0) return;
@@ -96,6 +143,11 @@ namespace Heathen.Ogham
             }
         }
 
+        /// <summary>
+        /// Registers a collection of runtime-created <see cref="DialogueEntry"/> instances and rebuilds the graph
+        /// index once if any new entries were added. Entries with no valid tag or that are already registered are skipped.
+        /// </summary>
+        /// <param name="entries">The entries to register; <c>null</c> is silently ignored.</param>
         public void RegisterEntries(IEnumerable<DialogueEntry> entries)
         {
             if (entries == null) return;
@@ -108,17 +160,28 @@ namespace Heathen.Ogham
             if (changed) RebuildIndex();
         }
 
+        /// <summary>
+        /// Removes the runtime entry identified by <paramref name="tag"/> and rebuilds the graph index.
+        /// </summary>
+        /// <param name="tag">The tag whose corresponding runtime entry should be removed.</param>
         public void UnregisterEntry(GameplayTag tag)
         {
             int idx = _runtimeEntries.FindIndex(e => e.ResolvedTag.Id == tag.Id);
             if (idx >= 0) { _runtimeEntries.RemoveAt(idx); RebuildIndex(); }
         }
 
-        // Force a full index rebuild after external modifications to runtime entries.
+        /// <summary>
+        /// Forces a full graph index rebuild. Call this after making external modifications to runtime entries
+        /// that bypass the normal registration API.
+        /// </summary>
         public void RefreshIndex() => RebuildIndex();
 
-        // ── Conversation ──────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Starts or restarts a conversation at the entry identified by <paramref name="nodeTag"/>.
+        /// If a conversation is already active it is closed (interrupted) before the new one begins.
+        /// </summary>
+        /// <param name="nodeTag">The tag of the dialogue entry to enter.</param>
+        /// <returns><c>true</c> when the entry was found and entered successfully; <c>false</c> if not found.</returns>
         public bool Enter(GameplayTag nodeTag)
         {
             var entry = FindEntryInternal(nodeTag.Id);
@@ -132,6 +195,12 @@ namespace Heathen.Ogham
             return true;
         }
 
+        /// <summary>
+        /// Selects the active option identified by <paramref name="optionTag"/>, applies its operations, fires
+        /// <see cref="OnChoice"/>, and navigates to the target entry (or closes if no target is set).
+        /// </summary>
+        /// <param name="optionTag">The tag of the option to select. Must be in <see cref="CurrentOptions"/>.</param>
+        /// <returns><c>true</c> when the option was found and applied; <c>false</c> if no conversation is active or the option was not found.</returns>
         public bool Choose(GameplayTag optionTag)
         {
             if (!_isActive) return false;
@@ -168,10 +237,18 @@ namespace Heathen.Ogham
             return true;
         }
 
+        /// <summary>
+        /// Ends the current conversation. Fires <see cref="OnClosed"/> with the interrupted flag.
+        /// </summary>
+        /// <param name="interrupted"><c>true</c> when the conversation was closed externally rather than by option selection.</param>
         public void Close(bool interrupted = false) => CloseInternal(interrupted);
 
-        // Navigate back to a previously-visited entry.
-        // Clears narrative-state tags for all descendant entries (not side-effect tags).
+        /// <summary>
+        /// Navigates back to a previously-visited entry and clears narrative-state tags for all descendant entries
+        /// (not general side-effect tags). Has no effect when no conversation is active or the entry is not found.
+        /// </summary>
+        /// <param name="entryTag">The tag of the entry to return to.</param>
+        /// <returns><c>true</c> when the entry was found and re-entered; <c>false</c> otherwise.</returns>
         public bool ReturnTo(GameplayTag entryTag)
         {
             if (!_isActive) return false;
@@ -192,20 +269,31 @@ namespace Heathen.Ogham
             return true;
         }
 
-        // ── Query ─────────────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Finds and returns the <see cref="DialogueEntry"/> with the given tag across all registered data sources,
+        /// or <c>null</c> if not found.
+        /// </summary>
+        /// <param name="tag">The GameplayTag identifying the entry to look up.</param>
+        /// <returns>The matching <see cref="DialogueEntry"/>, or <c>null</c>.</returns>
         public DialogueEntry FindEntry(GameplayTag tag) => FindEntryInternal(tag.Id);
 
-        // ── State / History management ────────────────────────────────────────
-
+        /// <summary>
+        /// Applies one or more <see cref="GameplayTagOperation"/> instances directly to this story's narrative state.
+        /// </summary>
+        /// <param name="ops">The operations to apply in order.</param>
         public void Execute(params GameplayTagOperation[] ops)
         {
             foreach (var op in ops)
                 op.Apply(_state);
         }
 
+        /// <summary>Clears all narrative-state tags for this story. Does not clear the history.</summary>
         public void ClearNarrativeState() => _state.Clear();
 
+        /// <summary>
+        /// Clears all narrative-state tags that match or are beneath <paramref name="tag"/> in the tag hierarchy.
+        /// </summary>
+        /// <param name="tag">The root tag whose subtree of state values should be removed.</param>
         public void ClearNarrativeState(GameplayTag tag)
         {
             var toRemove = _state.GetMatchingTags(tag);
@@ -213,8 +301,13 @@ namespace Heathen.Ogham
                 _state.RemoveTag(t);
         }
 
+        /// <summary>Removes all entries from the conversation history.</summary>
         public void ClearHistory() => _history.Clear();
 
+        /// <summary>
+        /// Removes the most recent <paramref name="steps"/> entries from the conversation history.
+        /// </summary>
+        /// <param name="steps">The number of recent history entries to remove. Clamped to the history count.</param>
         public void ClearHistory(int steps)
         {
             int count = Math.Min(steps, _history.Count);
@@ -222,8 +315,12 @@ namespace Heathen.Ogham
                 _history.RemoveRange(_history.Count - count, count);
         }
 
-        // ── Persistence ───────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Creates a deep snapshot of the current session (narrative state, history, current entry) as an
+        /// <see cref="OghamSaveState"/> that can be serialised and later restored via <see cref="Restore"/>.
+        /// </summary>
+        /// <param name="name">A human-readable label for the save state; defaults to "snapshot".</param>
+        /// <returns>A new <see cref="OghamSaveState"/> representing the current session.</returns>
         public OghamSaveState Snapshot(string name = "snapshot")
         {
             var snap = new OghamSaveState
@@ -239,6 +336,11 @@ namespace Heathen.Ogham
             return snap;
         }
 
+        /// <summary>
+        /// Restores the session from a previously created <see cref="OghamSaveState"/>, replacing narrative state,
+        /// history, and current entry. The story is marked inactive after restore; call <see cref="Enter"/> to resume.
+        /// </summary>
+        /// <param name="state">The save state to restore from.</param>
         public void Restore(OghamSaveState state)
         {
             _isActive       = false;
@@ -256,7 +358,12 @@ namespace Heathen.Ogham
         // ── ECS / Burst ───────────────────────────────────────────────────────
 
 #if UNITY_ENTITIES
-        // Caller-owned NativeHashMap for read-only job access. Caller must Dispose.
+        /// <summary>
+        /// Returns a caller-owned <c>NativeHashMap</c> copy of the current narrative state for read-only access
+        /// from Burst jobs. The caller is responsible for disposing the returned map.
+        /// </summary>
+        /// <param name="allocator">The allocator to use for the returned <c>NativeHashMap</c>.</param>
+        /// <returns>A <c>NativeHashMap&lt;ulong, ulong&gt;</c> mapping tag IDs to state values.</returns>
         public Unity.Collections.NativeHashMap<ulong, ulong> GetStateSnapshot(Unity.Collections.Allocator allocator) =>
             _state.GetSnapshot(allocator);
 #endif

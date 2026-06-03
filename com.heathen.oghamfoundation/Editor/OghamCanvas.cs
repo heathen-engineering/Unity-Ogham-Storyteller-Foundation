@@ -20,6 +20,7 @@ namespace Heathen.Ogham.Editor
         public static readonly Color Divider      = new(0.250f, 0.250f, 0.250f);
     }
 
+
     internal class CanvasNode
     {
         public DialogueEntry       Entry;
@@ -62,8 +63,11 @@ namespace Heathen.Ogham.Editor
         public Rect           Rect;       // canvas coordinates
     }
 
-    // IMGUI node-graph canvas. Drop-in replacement for the GraphView-based OghamGraphView.
-    // Draw() is called from an IMGUIContainer whose coordinate origin is the container's top-left.
+    /// <summary>
+    /// IMGUI node-graph canvas for the Ogham graph editor. Handles rendering, interaction, and layout of
+    /// dialogue nodes, edges, alias pins, and tab flags. <see cref="Draw"/> is called from an
+    /// <c>IMGUIContainer</c> whose coordinate origin is the container's top-left corner.
+    /// </summary>
     public class OghamCanvas
     {
         // ── Data ──────────────────────────────────────────────────────────────
@@ -162,12 +166,17 @@ namespace Heathen.Ogham.Editor
         // Reusable buffer for EdgeScreenPoints — eliminates per-edge List allocation.
         private readonly List<Vector2> _edgePtsBuf = new();
 
-        // ── Public ───────────────────────────────────────────────────────────
+        /// <summary>The currently active (write-target) <see cref="OghamData"/> asset. New nodes are added to this asset.</summary>
         public OghamData ActiveAsset { get; private set; }
+        /// <summary>When <c>true</c>, node drag positions snap to a 20-unit grid.</summary>
         public bool SnapToGrid { get => _snapToGrid; set => _snapToGrid = value; }
+        /// <summary>The tag path of the currently selected node, or <c>null</c> when nothing is selected.</summary>
         public string SelectedEntryTagPath => _nodes.FirstOrDefault(n => n.IsSelected)?.Entry.TagPath;
+        /// <summary>Raised whenever the graph data changes (node added, deleted, renamed, or wired).</summary>
         public event System.Action OnGraphChanged;
+        /// <summary>Raised when the user presses Ctrl+S while the canvas has focus, requesting a save of .ogham files.</summary>
         public event System.Action OnSaveRequested;
+        /// <summary>Raised when <see cref="ActiveAsset"/> changes due to a user action.</summary>
         public event System.Action OnActiveAssetChanged;
 
         private readonly EditorWindow _host;
@@ -219,10 +228,18 @@ namespace Heathen.Ogham.Editor
         private const float LodLabelZoom   = 0.25f;
         private const float LodPinMinR     = 4f;
 
+        /// <summary>
+        /// Initialises a new canvas bound to the given <paramref name="host"/> editor window.
+        /// The host is used for <c>Repaint</c> calls and for anchoring new file dialogs.
+        /// </summary>
+        /// <param name="host">The editor window that owns this canvas.</param>
         public OghamCanvas(EditorWindow host) => _host = host;
 
-        // ── Asset management ──────────────────────────────────────────────────
-
+        /// <summary>
+        /// Loads an <see cref="OghamData"/> asset into the canvas, creating or loading its companion
+        /// <see cref="OghamGraphMetadata"/> and assigning a header colour. Duplicate loads are silently ignored.
+        /// </summary>
+        /// <param name="data">The authoring asset to load. <c>null</c> is silently ignored.</param>
         public void LoadAsset(OghamData data)
         {
             if (data == null || _assets.Contains(data)) return;
@@ -245,9 +262,13 @@ namespace Heathen.Ogham.Editor
             RebuildCanvas();
         }
 
-        // Loads a synthetic (not-in-AssetDatabase) OghamData + OghamGraphMetadata pair.
-        // Used by the .ogham ScriptedImporter workflow where the source of truth is a JSON file.
-        // Changes are NOT auto-saved — the owning window must serialize back to JSON explicitly.
+        /// <summary>
+        /// Loads a synthetic (not-in-AssetDatabase) <see cref="OghamData"/> and <see cref="OghamGraphMetadata"/> pair.
+        /// Used by the .ogham ScriptedImporter workflow where the source of truth is a JSON file.
+        /// Changes are not auto-saved; the owning window must serialise back to JSON explicitly.
+        /// </summary>
+        /// <param name="data">The synthetic data asset. <c>null</c> is silently ignored.</param>
+        /// <param name="meta">The companion graph metadata. A new instance is created when <c>null</c>.</param>
         public void LoadSyntheticAsset(OghamData data, OghamGraphMetadata meta)
         {
             if (data == null || _assets.Contains(data)) return;
@@ -270,6 +291,10 @@ namespace Heathen.Ogham.Editor
             RebuildCanvas();
         }
 
+        /// <summary>
+        /// Removes the given asset from the canvas, clearing its nodes, edges, and colour association.
+        /// </summary>
+        /// <param name="data">The asset to unload.</param>
         public void UnloadAsset(OghamData data)
         {
             int i = _assets.IndexOf(data);
@@ -282,12 +307,20 @@ namespace Heathen.Ogham.Editor
             RebuildCanvas();
         }
 
+        /// <summary>Returns the <see cref="OghamGraphMetadata"/> companion for the given asset, or <c>null</c> when not loaded.</summary>
+        /// <param name="data">The asset whose metadata is requested.</param>
+        /// <returns>The companion metadata, or <c>null</c>.</returns>
         public OghamGraphMetadata GetMeta(OghamData data)
         {
             int i = _assets.IndexOf(data);
             return i >= 0 ? _metas[i] : null;
         }
 
+        /// <summary>
+        /// Sets the given asset as the active (write-target) asset. Has no effect when the asset is not loaded
+        /// or is already active.
+        /// </summary>
+        /// <param name="data">The asset to activate.</param>
         public void SetActiveAsset(OghamData data)
         {
             if (data == null || !_assets.Contains(data) || ActiveAsset == data) return;
@@ -295,6 +328,11 @@ namespace Heathen.Ogham.Editor
             OnActiveAssetChanged?.Invoke();
         }
 
+        /// <summary>
+        /// Shows or hides all nodes belonging to the given asset. Hidden nodes are not rendered or interactable.
+        /// </summary>
+        /// <param name="data">The asset whose visibility is changed.</param>
+        /// <param name="hidden">When <c>true</c>, hides the asset's nodes; when <c>false</c>, shows them.</param>
         public void SetAssetHidden(OghamData data, bool hidden)
         {
             if (hidden) _hiddenAssets.Add(data);
@@ -302,9 +340,17 @@ namespace Heathen.Ogham.Editor
             _host?.Repaint();
         }
 
+        /// <summary>Returns the header colour assigned to the given asset, or white when no colour is set.</summary>
+        /// <param name="data">The asset whose colour is requested.</param>
+        /// <returns>The assigned colour, or <see cref="Color.white"/>.</returns>
         public Color GetAssetColor(OghamData data)
             => _assetColors.TryGetValue(data, out var c) ? c : Color.white;
 
+        /// <summary>
+        /// Assigns a header colour to the given asset, persists it in the companion metadata, and rebuilds the canvas.
+        /// </summary>
+        /// <param name="data">The asset whose colour is changed.</param>
+        /// <param name="color">The new header colour to assign.</param>
         public void SetAssetColor(OghamData data, Color color)
         {
             if (data == null) return;
@@ -319,7 +365,13 @@ namespace Heathen.Ogham.Editor
             RebuildCanvas();
         }
 
-        // Called by the editor window when it adds an entry programmatically.
+        /// <summary>
+        /// Called by the editor window when a new entry is added programmatically. Registers the entry's
+        /// position in the companion metadata and rebuilds the canvas.
+        /// </summary>
+        /// <param name="asset">The data asset to which the entry belongs.</param>
+        /// <param name="entry">The newly created entry.</param>
+        /// <param name="canvasPos">The canvas-space position to place the node.</param>
         public void AddEntry(OghamData asset, DialogueEntry entry, Vector2 canvasPos)
         {
             int i = _assets.IndexOf(asset);
@@ -331,6 +383,11 @@ namespace Heathen.Ogham.Editor
             SaveMeta(_metas[i]);
         }
 
+        /// <summary>
+        /// Pans the canvas so the node with the given tag path is centred in the viewport.
+        /// Has no effect when no node with that tag is loaded.
+        /// </summary>
+        /// <param name="tagPath">The dot-path GameplayTag of the entry to frame.</param>
         public void FrameEntry(string tagPath)
         {
             var node = _nodes.FirstOrDefault(n => n.Entry.TagPath == tagPath);
@@ -357,10 +414,11 @@ namespace Heathen.Ogham.Editor
             _host?.Repaint();
         }
 
-        // BFS hierarchical layout — ported from O3DE OghamStoryteller::OnLayoutGraph().
-        // Roots = nodes with no incoming edges. Each root starts a BFS tree laid out in
-        // columns (depth) × rows (siblings). Separate trees are stacked vertically.
-        // Cycles are handled by treating all nodes as roots on first pass and skipping visited ones.
+        /// <summary>
+        /// Performs a BFS hierarchical layout of all currently loaded nodes, placing roots in the leftmost
+        /// column and their descendants in subsequent columns. Separate trees are stacked vertically.
+        /// Cycles are handled by treating unvisited nodes as additional roots. Ported from O3DE <c>OnLayoutGraph()</c>.
+        /// </summary>
         public void AutoLayout()
         {
             if (_nodes.Count == 0) return;
@@ -445,8 +503,12 @@ namespace Heathen.Ogham.Editor
             FrameNodes(_nodes);
         }
 
-        // BFS-layout only the nodes belonging to `asset`, placed below the bounding box
-        // of all other currently loaded nodes.  Called after importing into an open window.
+        /// <summary>
+        /// Performs a BFS hierarchical layout on only the nodes belonging to <paramref name="asset"/>,
+        /// placing them below the bounding box of all other currently loaded nodes. Called after importing
+        /// content into an already-open graph window.
+        /// </summary>
+        /// <param name="asset">The asset whose nodes are laid out.</param>
         public void AutoLayoutAsset(OghamData asset)
         {
             var assetNodes = _nodes.Where(n => n.Asset == asset).ToList();
@@ -535,8 +597,11 @@ namespace Heathen.Ogham.Editor
             _host?.Repaint();
         }
 
-        // Write BFS layout positions directly to the companion .graph.asset without requiring
-        // an open canvas window.  Used by the Twee importer when no graph window is open.
+        /// <summary>
+        /// Writes BFS layout positions directly to the companion <c>.graph.asset</c> without requiring an open
+        /// canvas window. Used by the Twee importer when no graph window is currently open.
+        /// </summary>
+        /// <param name="data">The data asset whose companion metadata is laid out. <c>null</c> is silently ignored.</param>
         public static void LayoutMetaDirect(OghamData data)
         {
             if (data == null) return;
@@ -641,8 +706,10 @@ namespace Heathen.Ogham.Editor
             AssetDatabase.SaveAssetIfDirty(meta);
         }
 
-        // Align/distribute the currently selected nodes — ported from O3DE AlignSelected().
-        // mode: 0=Left 1=Right 2=CenterH 3=Top 4=Bottom 5=CenterV 6=DistributeH 7=DistributeV
+        /// <summary>
+        /// Aligns or distributes the currently selected nodes. Ported from O3DE <c>AlignSelected()</c>.
+        /// </summary>
+        /// <param name="mode">The alignment mode: 0=Left, 1=Right, 2=CentreH, 3=Top, 4=Bottom, 5=CentreV, 6=DistributeH, 7=DistributeV.</param>
         public void AlignSelected(int mode)
         {
             var sel = _nodes.Where(n => n.IsSelected).ToList();
@@ -711,6 +778,12 @@ namespace Heathen.Ogham.Editor
             _host?.Repaint();
         }
 
+        /// <summary>
+        /// Returns the human-readable display name for the given entry, checking the companion metadata's
+        /// <c>TagName</c> field first, then the entry's tag path, and finally the tag registry.
+        /// </summary>
+        /// <param name="entry">The entry whose display name is resolved.</param>
+        /// <returns>A non-empty display name string.</returns>
         public string ResolveEntryName(DialogueEntry entry)
         {
             var n = _nodes.FirstOrDefault(x => x.Entry == entry);
@@ -730,8 +803,11 @@ namespace Heathen.Ogham.Editor
                 ?? entry.Tag.Id.ToString("X16");
         }
 
-        // ── RebuildCanvas ─────────────────────────────────────────────────────
-
+        /// <summary>
+        /// Rebuilds all internal node, edge, and alias lists from the currently loaded assets and metadata.
+        /// Call after structural changes to the graph (node added, deleted, or renamed) that bypass the normal
+        /// edit API.
+        /// </summary>
         public void RebuildCanvas()
         {
             _storytellerMeta = null; // refresh on next access so label changes take effect
@@ -903,8 +979,11 @@ namespace Heathen.Ogham.Editor
             return new Vector2(n.Rect.xMax - PinColW * 0.5f, top + (optIdx + 0.5f) * RowH);
         }
 
-        // ── Draw entry point ──────────────────────────────────────────────────
-
+        /// <summary>
+        /// Main IMGUI draw entry point. Must be called every frame from an <c>IMGUIContainer</c>.
+        /// Handles input, rendering all layers (grid, edges, nodes, pins, selection), and Repaint requests.
+        /// </summary>
+        /// <param name="rect">The available canvas area in screen coordinates, with origin at the container's top-left.</param>
         public void Draw(Rect rect)
         {
             _canvasRect = rect;
@@ -2893,6 +2972,12 @@ namespace Heathen.Ogham.Editor
             return baseName + System.Guid.NewGuid().ToString("N").Substring(0, 6);
         }
 
+        /// <summary>
+        /// Creates a new empty <see cref="DialogueEntry"/> in <paramref name="asset"/>, places it at
+        /// <paramref name="canvasPos"/> in the canvas, and opens the rename dialog.
+        /// </summary>
+        /// <param name="asset">The data asset to add the entry to.</param>
+        /// <param name="canvasPos">The canvas-space position for the new node.</param>
         public void CreateEntry(OghamData asset, Vector2 canvasPos)
         {
             int mi = _assets.IndexOf(asset);
@@ -2912,10 +2997,16 @@ namespace Heathen.Ogham.Editor
             OnGraphChanged?.Invoke();
         }
 
+        /// <summary>The canvas-space coordinate at the centre of the current viewport.</summary>
         public Vector2 CanvasCentre => ToCanvas(_canvasRect.center);
 
+        /// <summary>The current zoom scale, clamped between 0.15 and 1.0.</summary>
         public float Zoom => _zoom;
 
+        /// <summary>
+        /// Sets the zoom level and adjusts the pan offset so the current canvas centre remains centred in the viewport.
+        /// </summary>
+        /// <param name="z">The desired zoom scale. Clamped to the range [0.15, 1.0].</param>
         public void SetZoom(float z)
         {
             _zoom = Mathf.Clamp(z, 0.15f, 1.0f);

@@ -6,19 +6,25 @@ using Heathen.Lexicon;
 
 namespace Heathen.Ogham
 {
+    /// <summary>
+    /// Associates a Lexicon text key with a prefab so <see cref="OghamTemplateSpawner"/> can map resolved
+    /// content key values to specific prefab instances during a conversation.
+    /// </summary>
     [Serializable]
     public class OghamTemplatePair
     {
+        /// <summary>The Lexicon text key whose resolved value is matched against each node's content keys.</summary>
         public LexiconText TextKey = new();
+        /// <summary>The prefab to spawn when <see cref="TextKey"/> matches a content key value in the active node.</summary>
         public GameObject Prefab;
     }
 
-    // Listens to Storyteller events and spawns / despawns Prefabs based on
-    // Text-type content key slots in each node's ContentKeys list.
-    //
-    // Pair up each content key role (narrator, speaker, body, etc.) with a Prefab
-    // in the Templates list. The spawner resolves text keys and manages instances
-    // according to the chosen Mode and CloseMode.
+    /// <summary>
+    /// Listens to <see cref="Storyteller"/> events and spawns or despawns prefab instances based on the
+    /// Text-type content key values in each dialogue node. Pair each content key role (narrator, speaker,
+    /// body text, etc.) with a prefab in <see cref="Templates"/>. Instantiation and cleanup behaviour is
+    /// controlled by <see cref="Mode"/> and <see cref="CloseMode"/>.
+    /// </summary>
     public class OghamTemplateSpawner : MonoBehaviour
     {
         [Tooltip("Track the current main story, or a specific named story.")]
@@ -27,10 +33,14 @@ namespace Heathen.Ogham
         [Tooltip("Dot-path tag identifying the story to track when Target is Specific.")]
         [SerializeField] private string _storyTagPath;
 
+        /// <summary>Controls how existing prefab instances are managed when a new dialogue node is entered.</summary>
         public OghamInstantiationMode Mode      = OghamInstantiationMode.Diff;
+        /// <summary>Controls whether spawned instances are destroyed or retained when the conversation closes.</summary>
         public OghamCloseMode         CloseMode = OghamCloseMode.Clear;
+        /// <summary>Controls when prefab assets for upcoming nodes are pre-fetched.</summary>
         public OghamLoadMode          LoadMode  = OghamLoadMode.PreWarm;
 
+        /// <summary>The list of Lexicon-key-to-prefab pairings this spawner manages.</summary>
         public List<OghamTemplatePair> Templates = new();
 
         private readonly Dictionary<string, List<GameObject>> _active = new();

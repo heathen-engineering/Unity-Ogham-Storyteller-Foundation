@@ -1,10 +1,14 @@
 namespace Heathen.Ogham
 {
+    /// <summary>
+    /// Controls what happens to spawned template instances when a conversation closes.
+    /// Used by <see cref="OghamTemplateSpawner"/> to determine whether to destroy or retain active prefab instances.
+    /// </summary>
     public enum OghamCloseMode
     {
-        // Destroy all spawned instances when conversation closes.
+        /// <summary>Destroy all spawned instances when the conversation closes.</summary>
         Clear,
-        // Leave spawned instances alive when conversation closes.
+        /// <summary>Leave spawned instances alive when the conversation closes.</summary>
         None,
     }
 }

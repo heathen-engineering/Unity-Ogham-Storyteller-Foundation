@@ -8,10 +8,19 @@ using Heathen.Ogham;
 
 namespace Heathen.Ogham.Editor
 {
-    // Modal in-editor playback of the Ogham dialogue graph.
-    // Opens via ShowModal() — blocks interaction with other editor windows until closed.
+    /// <summary>
+    /// Modal in-editor playback window for the Ogham dialogue graph. Blocks interaction with other editor windows
+    /// via <c>ShowModal()</c>. Allows the author to traverse the story graph, inspect narrative state, and review
+    /// conversation history without entering Play mode.
+    /// </summary>
     public class OghamPlayWindow : EditorWindow
     {
+        /// <summary>
+        /// Opens the play window as a modal dialog, loading the given assets and optionally starting at the
+        /// entry identified by <paramref name="startTagPath"/>.
+        /// </summary>
+        /// <param name="assets">The authoring assets to load into the play session.</param>
+        /// <param name="startTagPath">The dot-path tag of the entry to pre-select. <c>null</c> means no pre-selection.</param>
         public static void Open(IEnumerable<OghamData> assets, string startTagPath = null)
         {
             var w = CreateInstance<OghamPlayWindow>();
