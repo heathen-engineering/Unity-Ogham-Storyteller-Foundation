@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Heathen.GameplayTags;
 using Heathen.Lexicon;
+using UnityEngine;
 
 namespace Heathen.Ogham
 {
@@ -13,11 +14,26 @@ namespace Heathen.Ogham
     /// </summary>
     public static class Storyteller
     {
-        private static readonly Dictionary<ulong, OghamStory> _stories = new();
+        private static readonly Dictionary<ulong, OghamStory>      _stories    = new();
+        private static readonly Dictionary<ulong, IStoryProcessor> _processors = new();
         private static OghamStory _mainStory;
 
         private static readonly IReadOnlyList<StoryOption>  _emptyOptions = Array.Empty<StoryOption>();
         private static readonly IReadOnlyList<HistoryEntry> _emptyHistory = Array.Empty<HistoryEntry>();
+
+        // Static state survives "Enter Play Mode without Domain Reload"; clear it on every play session
+        // so stale stories, processors, and dangling event subscriptions never carry over.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics()
+        {
+            _stories.Clear();
+            _processors.Clear();
+            _mainStory = null;
+            OnEntered  = null;
+            OnChoice   = null;
+            OnClosed   = null;
+            OghamVariables.ResetToDefaults();
+        }
 
         /// <summary>
         /// Raised when any registered story enters a dialogue node. The first parameter identifies which story fired.
@@ -97,6 +113,7 @@ namespace Heathen.Ogham
             story.OnChoice  -= ForwardChoice;
             story.OnClosed  -= ForwardClosed;
             _stories.Remove(storyId.Id);
+            _processors.Remove(storyId.Id);
 
             if (_mainStory == story)
             {
@@ -132,6 +149,45 @@ namespace Heathen.Ogham
         /// <summary>The tag ID of the current main story, or <c>default(GameplayTag)</c> when no story is registered.</summary>
         public static GameplayTag MainStoryId => _mainStory?.Id ?? default;
 
+        // ── Processor ownership ───────────────────────────────────────────────
+
+        /// <summary>
+        /// Registers <paramref name="processor"/> as the single active presenter for the story identified by
+        /// <paramref name="storyId"/>. If another processor already holds the story it is superseded
+        /// (notified via <see cref="IStoryProcessor.OnSuperseded"/>) and replaced. The story and its state
+        /// remain owned by the Storyteller and are unaffected by the hand-over.
+        /// </summary>
+        /// <param name="storyId">The story to acquire presentation rights for.</param>
+        /// <param name="processor">The processor taking over presentation. <c>null</c> is ignored.</param>
+        public static void AcquireStory(GameplayTag storyId, IStoryProcessor processor)
+        {
+            if (processor == null) return;
+            if (_processors.TryGetValue(storyId.Id, out var prev) && prev != null && !ReferenceEquals(prev, processor))
+                prev.OnSuperseded(storyId);
+            _processors[storyId.Id] = processor;
+        }
+
+        /// <summary>
+        /// Releases presentation rights for <paramref name="storyId"/> held by <paramref name="processor"/>,
+        /// but only when it is still the active presenter. A no-op if another processor has since taken over.
+        /// Does not unregister the story — use <see cref="UnregisterStory"/> for that.
+        /// </summary>
+        /// <param name="storyId">The story to release.</param>
+        /// <param name="processor">The processor relinquishing presentation.</param>
+        public static void ReleaseStory(GameplayTag storyId, IStoryProcessor processor)
+        {
+            if (_processors.TryGetValue(storyId.Id, out var cur) && ReferenceEquals(cur, processor))
+                _processors.Remove(storyId.Id);
+        }
+
+        /// <summary>
+        /// Returns <c>true</c> when <paramref name="processor"/> is the active presenter for the given story.
+        /// </summary>
+        /// <param name="storyId">The story to test.</param>
+        /// <param name="processor">The processor to check.</param>
+        public static bool IsProcessor(GameplayTag storyId, IStoryProcessor processor) =>
+            _processors.TryGetValue(storyId.Id, out var cur) && ReferenceEquals(cur, processor);
+
         /// <summary>Starts a conversation at the given node in the main story. Returns <c>false</c> when the entry is not found.</summary>
         /// <param name="nodeTag">The tag of the dialogue entry to enter.</param>
         /// <returns><c>true</c> on success; <c>false</c> when no main story is set or the entry is not found.</returns>
@@ -142,6 +198,11 @@ namespace Heathen.Ogham
         public static bool Choose(GameplayTag optionTag)       => _mainStory?.Choose(optionTag)  ?? false;
         /// <summary>Closes the main story's active conversation, if any.</summary>
         public static void Close()                             => _mainStory?.Close();
+        /// <summary>
+        /// Re-surfaces the main story's current node after a <see cref="Restore(OghamSaveState)"/> without
+        /// re-running its On-Enter operations. Returns <c>false</c> when there is nothing to resume.
+        /// </summary>
+        public static bool Resume()                            => _mainStory?.Resume()          ?? false;
 
         /// <summary>Starts a conversation at the given node in the specified story.</summary>
         /// <param name="storyId">The tag identifying the target story.</param>
@@ -156,6 +217,9 @@ namespace Heathen.Ogham
         /// <summary>Closes the active conversation in the specified story, if any.</summary>
         /// <param name="storyId">The tag identifying the target story.</param>
         public static void Close(GameplayTag storyId)                              => GetStory(storyId)?.Close();
+        /// <summary>Re-surfaces the specified story's current node after a restore, without re-running On-Enter operations.</summary>
+        /// <param name="storyId">The tag identifying the target story.</param>
+        public static bool Resume(GameplayTag storyId)                             => GetStory(storyId)?.Resume()    ?? false;
 
         /// <summary>Returns <c>true</c> when the main story has an active conversation.</summary>
         public static bool                        IsActive   => _mainStory?.IsActive          ?? false;
@@ -283,7 +347,7 @@ namespace Heathen.Ogham
         private static void ForwardChoice(GameplayTag storyId, StoryOption option) =>
             OnChoice?.Invoke(storyId, option);
 
-        private static void ForwardClosed(GameplayTag storyId, bool _) =>
+        private static void ForwardClosed(GameplayTag storyId) =>
             OnClosed?.Invoke(storyId);
     }
 }

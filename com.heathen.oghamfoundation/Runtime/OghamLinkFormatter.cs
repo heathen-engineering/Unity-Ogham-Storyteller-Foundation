@@ -31,7 +31,7 @@ namespace Heathen.Ogham
         /// Converts raw authoring text to styled TMPro markup, applying <paramref name="activeFormat"/> or
         /// <paramref name="inactiveFormat"/> to each <c>Ogham://</c> inline link based on the matching
         /// <see cref="StoryOption.IsActive"/> value. Non-Ogham links pass through unchanged.
-        /// Call <see cref="InterpolateState"/> before this method to expand any <c>@@TagPath()</c> tokens first.
+        /// Call <see cref="InterpolateState"/> before this method to expand any <c>@Token(Tag.Path)</c> variables first.
         /// </summary>
         /// <param name="rawText">The raw authoring text containing Ogham inline-link syntax.</param>
         /// <param name="node">The current <see cref="StoryNode"/> used to resolve option states. May be <c>null</c>.</param>
@@ -150,32 +150,17 @@ namespace Heathen.Ogham
         }
 
         /// <summary>
-        /// Substitutes <c>@@TagPath()</c> and <c>@@TagPath(format)</c> tokens in the text with the corresponding
-        /// narrative-state values from <paramref name="state"/>. Unrecognised tags resolve to 0.
-        /// Call this method before <see cref="Format"/> so variable values are expanded before link markup runs.
+        /// Substitutes inline <c>@Token(Tag.Path, …)</c> variables in the text with values resolved from
+        /// <paramref name="state"/> via <see cref="OghamVariables"/>. Built-in tokens cover localised text
+        /// (<c>@String</c>) and the numeric types (<c>@Float</c>, <c>@Double</c>, <c>@Long</c>, <c>@Ulong</c>,
+        /// <c>@Int</c>, <c>@UInt</c>); projects can register their own. Call this before <see cref="Format"/>
+        /// so variable values are expanded before link markup runs.
         /// </summary>
-        /// <param name="text">The raw text that may contain <c>@@TagPath(format)</c> tokens.</param>
+        /// <param name="text">The raw text that may contain <c>@Token(Tag.Path, …)</c> variables.</param>
         /// <param name="state">The <see cref="GameplayTagCollection"/> holding the current narrative state values.</param>
-        /// <returns>The text with all state-variable tokens replaced by their resolved values.</returns>
-        public static string InterpolateState(string text, GameplayTagCollection state)
-        {
-            if (string.IsNullOrEmpty(text) || state == null) return text;
-            return StateTokenRx.Replace(text, m =>
-            {
-                var tag    = GameplayTag.FromName(m.Groups[1].Value);
-                var value  = state.GetValue(tag);
-                var format = m.Groups[2].Value;
-                return string.IsNullOrEmpty(format) ? value.ToString() : value.ToString(format);
-            });
-        }
-
-        // @@TagPath(format) — parens always required; tag path is dot-separated identifiers,
-        // format string is everything inside the parentheses (may be empty).
-        private static readonly System.Text.RegularExpressions.Regex StateTokenRx =
-            new System.Text.RegularExpressions.Regex(
-                @"@@([A-Za-z_][A-Za-z0-9_.]*)\(([^)]*)\)",
-                System.Text.RegularExpressions.RegexOptions.Compiled |
-                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        /// <returns>The text with all recognised variable tokens replaced by their resolved values.</returns>
+        public static string InterpolateState(string text, GameplayTagCollection state) =>
+            OghamVariables.Interpolate(text, state);
 
         // ── Private ───────────────────────────────────────────────────────────
 

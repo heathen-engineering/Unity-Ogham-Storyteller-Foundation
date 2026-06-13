@@ -59,6 +59,17 @@ namespace Heathen.Ogham.Editor
             ctx.AddObjectToAsset("main", compiled);
             ctx.SetMainObject(compiled);
 
+            // Validate Fork termination: a fork-to-fork cycle never resolves to a node or ends the
+            // conversation, and would spin forever at runtime. Surface it on the asset at compile time.
+            var cyclicForks = OghamForkValidator.FindCyclicForks(compiled.Entries);
+            foreach (var forkId in cyclicForks)
+            {
+                var forkName = GameplayTagRegistry.GetName(forkId) ?? forkId.ToString("X16");
+                ctx.LogImportError(
+                    $"[Ogham] Fork '{forkName}' is part of a routing cycle. Every path out of a Fork must " +
+                    $"resolve to a node or end the conversation. ({ctx.assetPath})");
+            }
+
             // Build graph editor layout metadata from the _editor block.
             OghamGraphMetadata meta;
             try

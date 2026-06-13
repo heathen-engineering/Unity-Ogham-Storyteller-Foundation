@@ -881,7 +881,19 @@ namespace Heathen.Ogham.Editor
                         Rect = new Rect(am.Position, new Vector2(AliasW, AliasH)) });
             }
 
+            RecomputeForkValidation();
             _orderedNodesDirty = true;
+        }
+
+        // Fork tag IDs that sit on a routing cycle (never resolve). Refreshed on each graph rebuild
+        // and used to flag the offending nodes in their header.
+        private readonly HashSet<ulong> _invalidForkIds = new();
+
+        private void RecomputeForkValidation()
+        {
+            _invalidForkIds.Clear();
+            foreach (var id in OghamForkValidator.FindCyclicForks(_nodes.Select(n => n.Entry)))
+                _invalidForkIds.Add(id);
         }
 
         private string ResolveDisplayName(DialogueEntry entry, OghamNodeMeta nm)
@@ -1782,11 +1794,12 @@ namespace Heathen.Ogham.Editor
             var hdrR = new Rect(sr.x + 1f, sr.y + 1f, sr.width - 2f, hScaled);
             EditorGUI.DrawRect(hdrR, node.HeaderColor);
 
-            // Fork mode indicator — amber stripe on left edge of header
-            bool isForkNode = node.Entry.Mode == OghamNodeMode.Fork;
+            // Fork mode indicator — amber stripe on left edge of header (red when the fork is invalid).
+            bool isForkNode  = node.Entry.Mode == OghamNodeMode.Fork;
+            bool invalidFork = isForkNode && _invalidForkIds.Contains(node.Entry.ResolvedTag.Id);
             if (isForkNode)
                 EditorGUI.DrawRect(new Rect(hdrR.x, hdrR.y, 3f, hdrR.height),
-                    new Color(1.0f, 0.72f, 0.15f));
+                    invalidFork ? new Color(0.90f, 0.20f, 0.20f) : new Color(1.0f, 0.72f, 0.15f));
 
             // Header label — abbreviated to last tag segment when header is narrow; hidden below LodLabelZoom.
             if (showLabel)
@@ -1818,6 +1831,9 @@ namespace Heathen.Ogham.Editor
                     var lastDot = headerName.LastIndexOf('.');
                     if (lastDot >= 0) headerName = headerName.Substring(lastDot + 1);
                 }
+
+                // Error glyph beside the name when this fork is part of a routing cycle.
+                if (invalidFork) headerName = "⚠ " + headerName;
 
                 _headerStyle.normal.textColor = AdaptiveTextColor(node.HeaderColor);
                 GUI.Label(new Rect(lblX, hdrR.y, lblW, hScaled), headerName, _headerStyle);

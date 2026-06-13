@@ -25,7 +25,7 @@ namespace Heathen.Ogham.Editor
             public IReadOnlyList<string> ContentLabels    = Array.Empty<string>();
             // key → resolved text from helex; null = use raw key string
             public Func<string, string> ResolveKey        = null;
-            // Wrappers for @@TagPath() substitutions. Markdown uses {} since <<>> is HTML.
+            // Wrappers for @Token(Tag.Path) variable substitutions. Markdown uses {} since <<>> is HTML.
             public string StateVarOpen  = "<<";
             public string StateVarClose = ">>";
         }
@@ -43,8 +43,9 @@ namespace Heathen.Ogham.Editor
             '|', '~', '^',
         };
 
+        // @Token(Tag.Path[, args…]) — group 1 is the token type, group 2 is the tag path.
         private static readonly Regex s_StateVarRegex = new Regex(
-            @"@@([A-Za-z_][A-Za-z0-9_.]*)\([^)]*\)",
+            @"@([A-Za-z_][A-Za-z0-9_]*)\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*(?:,[^)]*)?\)",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         private static readonly Regex s_InlineLinkRegex = new Regex(
@@ -360,10 +361,10 @@ namespace Heathen.Ogham.Editor
         {
             if (string.IsNullOrEmpty(raw)) return raw;
 
-            // @@TagPath() → {TagName} or <<TagName>> depending on format
+            // @Token(Tag.Path, …) → {TagName} or <<TagName>> depending on format
             raw = s_StateVarRegex.Replace(raw, m =>
             {
-                var path = m.Groups[1].Value;
+                var path = m.Groups[2].Value;
                 var dot  = path.LastIndexOf('.');
                 var name = dot >= 0 ? path.Substring(dot + 1) : path;
                 return opts.StateVarOpen + name + opts.StateVarClose;

@@ -59,10 +59,11 @@ namespace Heathen.Ogham
         /// </summary>
         public event Action<GameplayTag, StoryOption> OnChoice;
         /// <summary>
-        /// Raised when the conversation ends, whether normally or interrupted.
-        /// The first parameter is this story's <see cref="Id"/>; the second indicates whether it was interrupted.
+        /// Raised when the conversation ends. The only way a story ends is a deliberate exit
+        /// (an option with no target, or an explicit <see cref="Close"/>); there is no separate
+        /// "interrupted" state. The parameter is this story's <see cref="Id"/>.
         /// </summary>
-        public event Action<GameplayTag, bool>        OnClosed;
+        public event Action<GameplayTag>              OnClosed;
 
         /// <summary>
         /// Initialises a new story with the given identity tag. Register this instance with
@@ -178,7 +179,7 @@ namespace Heathen.Ogham
 
         /// <summary>
         /// Starts or restarts a conversation at the entry identified by <paramref name="nodeTag"/>.
-        /// If a conversation is already active it is closed (interrupted) before the new one begins.
+        /// If a conversation is already active it is closed before the new one begins.
         /// </summary>
         /// <param name="nodeTag">The tag of the dialogue entry to enter.</param>
         /// <returns><c>true</c> when the entry was found and entered successfully; <c>false</c> if not found.</returns>
@@ -187,7 +188,7 @@ namespace Heathen.Ogham
             var entry = FindEntryInternal(nodeTag.Id);
             if (entry == null) return false;
 
-            if (_isActive) CloseInternal(interrupted: true);
+            if (_isActive) CloseInternal();
 
             _isActive       = true;
             _currentEntryId = nodeTag.Id;
@@ -200,7 +201,11 @@ namespace Heathen.Ogham
         /// <see cref="OnChoice"/>, and navigates to the target entry (or closes if no target is set).
         /// </summary>
         /// <param name="optionTag">The tag of the option to select. Must be in <see cref="CurrentOptions"/>.</param>
-        /// <returns><c>true</c> when the option was found and applied; <c>false</c> if no conversation is active or the option was not found.</returns>
+        /// <returns>
+        /// <c>true</c> whenever a valid, condition-passing option was accepted, regardless of whether it
+        /// navigates to a target or ends the conversation. <c>false</c> only when no conversation is active
+        /// or the option is not currently available (missing or gated by its conditions).
+        /// </returns>
         public bool Choose(GameplayTag optionTag)
         {
             if (!_isActive) return false;
@@ -224,12 +229,15 @@ namespace Heathen.Ogham
 
             if (chosenTarget.Id == 0)
             {
-                CloseInternal(interrupted: false);
+                // Deliberate exit: an option with no target ends the conversation.
+                CloseInternal();
             }
             else
             {
                 var target = FindEntryInternal(chosenTarget.Id);
-                if (target == null) { CloseInternal(interrupted: false); return false; }
+                // A dangling target is a graph error, not a rejected choice: the option was valid and
+                // accepted, so report success and end the conversation cleanly.
+                if (target == null) { CloseInternal(); return true; }
                 _currentEntryId = chosenTarget.Id;
                 EnterEntry(target);
             }
@@ -238,14 +246,36 @@ namespace Heathen.Ogham
         }
 
         /// <summary>
-        /// Ends the current conversation. Fires <see cref="OnClosed"/> with the interrupted flag.
+        /// Ends the current conversation and fires <see cref="OnClosed"/>.
         /// </summary>
-        /// <param name="interrupted"><c>true</c> when the conversation was closed externally rather than by option selection.</param>
-        public void Close(bool interrupted = false) => CloseInternal(interrupted);
+        public void Close() => CloseInternal();
+
+        /// <summary>
+        /// Re-surfaces the current entry without re-running its On-Enter operations, rebuilding its options
+        /// and firing <see cref="OnEntered"/>. Use this after <see cref="Restore"/> to resume a saved session
+        /// and re-display the node the player was last on. Has no effect when there is no current entry,
+        /// the entry is not found, or the current entry is a Fork (which is never a resting position).
+        /// </summary>
+        /// <returns><c>true</c> when the current entry was re-surfaced; otherwise <c>false</c>.</returns>
+        public bool Resume()
+        {
+            if (_currentEntryId == 0) return false;
+            var entry = FindEntryInternal(_currentEntryId);
+            if (entry == null || entry.Mode == OghamNodeMode.Fork) return false;
+
+            _isActive = true;
+            var (active, all) = BuildOptions(entry);
+            _currentOptions    = active;
+            _currentAllOptions = all;
+            _currentNode       = new StoryNode(entry, active, all);
+            OnEntered?.Invoke(Id, _currentNode);
+            return true;
+        }
 
         /// <summary>
         /// Navigates back to a previously-visited entry and clears narrative-state tags for all descendant entries
-        /// (not general side-effect tags). Has no effect when no conversation is active or the entry is not found.
+        /// (not general side-effect tags), then re-enters it through the normal entry path so On-Enter operations
+        /// and Fork routing are honoured. Has no effect when no conversation is active or the entry is not found.
         /// </summary>
         /// <param name="entryTag">The tag of the entry to return to.</param>
         /// <returns><c>true</c> when the entry was found and re-entered; <c>false</c> otherwise.</returns>
@@ -261,11 +291,7 @@ namespace Heathen.Ogham
                 _state.Apply(new GameplayTag(id), GameplayTagArithmetic.Set, 0);
 
             _currentEntryId = entryTag.Id;
-            var (active, all) = BuildOptions(entry);
-            _currentOptions    = active;
-            _currentAllOptions = all;
-            _currentNode       = new StoryNode(entry, active, all);
-            OnEntered?.Invoke(Id, _currentNode);
+            EnterEntry(entry);
             return true;
         }
 
@@ -370,7 +396,7 @@ namespace Heathen.Ogham
 
         // ── Private ───────────────────────────────────────────────────────────
 
-        private void CloseInternal(bool interrupted)
+        private void CloseInternal()
         {
             if (!_isActive) return;
             _isActive          = false;
@@ -378,7 +404,7 @@ namespace Heathen.Ogham
             _currentNode       = null;
             _currentOptions    = Array.Empty<StoryOption>();
             _currentAllOptions = Array.Empty<StoryOption>();
-            OnClosed?.Invoke(Id, interrupted);
+            OnClosed?.Invoke(Id);
         }
 
         private void RebuildIndex()
@@ -439,40 +465,57 @@ namespace Heathen.Ogham
             }
         }
 
+        // Iterative entry: walks through any chain of Fork nodes until it reaches a displayable
+        // Content node, the conversation ends, or a fork cycle is detected. Iteration (rather than
+        // recursion) plus a visited-set means a malformed graph can never blow the stack — the
+        // editor validates fork termination at compile time, and this is the runtime safety net.
         private void EnterEntry(DialogueEntry entry)
         {
-            foreach (var op in entry.EntryOperations)
-                op.Apply(_state);
+            HashSet<ulong> visitedForks = null;
 
-            if (entry.Mode == OghamNodeMode.Fork)
+            while (true)
             {
+                foreach (var op in entry.EntryOperations)
+                    op.Apply(_state);
+
+                if (entry.Mode != OghamNodeMode.Fork)
+                {
+                    var (activeOpts, allOpts) = BuildOptions(entry);
+                    _currentOptions    = activeOpts;
+                    _currentAllOptions = allOpts;
+                    _currentNode       = new StoryNode(entry, activeOpts, allOpts);
+                    OnEntered?.Invoke(Id, _currentNode);
+                    return;
+                }
+
                 // Fork nodes route silently: evaluate routes, pick the first passing one.
                 // No OnEntered event. No history entry. Player never sees this node.
+                visitedForks ??= new HashSet<ulong>();
+                if (!visitedForks.Add(entry.ResolvedTag.Id))
+                {
+                    UnityEngine.Debug.LogError(
+                        $"[Ogham] Fork cycle detected re-entering '{entry.ResolvedTag.Id}' in story '{Id.Id}'. " +
+                        "Closing the conversation. Every path out of a Fork must resolve to a node or end the story.");
+                    CloseInternal();
+                    return;
+                }
+
                 var (active, _) = BuildOptions(entry);
                 var route = active.Count > 0 ? active[0] : null;
-                if (route == null) { CloseInternal(interrupted: false); return; }
+                if (route == null) { CloseInternal(); return; }
 
                 foreach (var op in route.RawOption.Operations)
                     op.Apply(_state);
 
                 var dest = route.RawOption.ResolvedTargetEntry;
-                if (dest.Id == 0)
-                {
-                    CloseInternal(interrupted: false);
-                    return;
-                }
-                var target = FindEntryInternal(dest.Id);
-                if (target == null) { CloseInternal(interrupted: false); return; }
-                _currentEntryId = dest.Id;
-                EnterEntry(target);
-                return;
-            }
+                if (dest.Id == 0) { CloseInternal(); return; }
 
-            var (activeOpts, allOpts) = BuildOptions(entry);
-            _currentOptions    = activeOpts;
-            _currentAllOptions = allOpts;
-            _currentNode       = new StoryNode(entry, activeOpts, allOpts);
-            OnEntered?.Invoke(Id, _currentNode);
+                var target = FindEntryInternal(dest.Id);
+                if (target == null) { CloseInternal(); return; }
+
+                _currentEntryId = dest.Id;
+                entry           = target;
+            }
         }
 
         // Returns (active, all): active contains only condition-passing options;

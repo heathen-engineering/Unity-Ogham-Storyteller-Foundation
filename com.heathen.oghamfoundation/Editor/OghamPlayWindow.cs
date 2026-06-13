@@ -159,7 +159,7 @@ namespace Heathen.Ogham.Editor
             Repaint();
         }
 
-        private void HandleClosed(GameplayTag storyId, bool interrupted)
+        private void HandleClosed(GameplayTag storyId)
         {
             _current = null;
             Repaint();
@@ -185,7 +185,7 @@ namespace Heathen.Ogham.Editor
                 if (GUILayout.Button("Reset", EditorStyles.toolbarButton, GUILayout.Width(50)))
                     { ResetStory(); Repaint(); }
                 if (GUILayout.Button("Close", EditorStyles.toolbarButton, GUILayout.Width(50)))
-                    { _story?.Close(interrupted: true); Close(); }
+                    { _story?.Close(); Close(); }
             }
 
             // Three-column body: [State | Content | History]
