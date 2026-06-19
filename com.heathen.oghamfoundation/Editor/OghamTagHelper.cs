@@ -85,13 +85,9 @@ namespace Heathen.Ogham.Editor
         // Finds the first .gptags file in the project, or prompts the user to create one.
         private static string FindOrCreateGpTagsFile()
         {
-            var guids = AssetDatabase.FindAssets("t:GameplayTagsCompiledData");
-            foreach (var guid in guids)
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                if (path.EndsWith(".gptags", System.StringComparison.OrdinalIgnoreCase))
-                    return path;
-            }
+            // .gptags is no longer a typed asset (it imports to a TextAsset now); discover by file scan.
+            var existing = Heathen.GameplayTags.Editor.GameplayTagsSources.FindAll();
+            if (existing.Count > 0) return existing[0];
 
             var savePath = EditorUtility.SaveFilePanelInProject(
                 "Create Tag Source", "TagSource", "gptags",
