@@ -9,19 +9,19 @@ using Heathen.Lexicon;
 namespace Heathen.Ogham.Editor
 {
     /// <summary>
-    /// <c>ScriptedImporter</c> for <c>.ogham</c> JSON source files. Compiles each file into an
-    /// <see cref="OghamCompiledData"/> main sub-asset (runtime-ready, with TMPro markup and inline localisations)
-    /// and an <see cref="OghamGraphMetadata"/> secondary sub-asset (graph editor layout from the <c>_editor</c> block).
-    /// Tags referenced in the file are registered with <see cref="GameplayTags.GameplayTagRegistry"/> at import time
-    /// so ancestry queries work without a separate <c>.gptags</c> file. Inline localisations are injected into
-    /// <see cref="Heathen.Lexicon.LexiconRegistry"/> for editor-time string resolution.
+    /// <c>ScriptedImporter</c> for <c>.ogham</c> JSON source files. Imports each file as a plain
+    /// <see cref="UnityEngine.TextAsset"/> (the portable JSON is the source of truth; runtime consumes baked
+    /// code via <c>OghamStoryGenerator</c> → <c>OghamStoryCatalog</c>, not this asset, so no ScriptableObject
+    /// is produced). Tags referenced in the file are registered with <see cref="GameplayTags.GameplayTagRegistry"/>
+    /// at import time so ancestry queries work without a separate <c>.gptags</c> file, inline localisations are
+    /// injected into <see cref="Heathen.Lexicon.LexiconRegistry"/> for editor-time resolution, and fork cycles
+    /// are validated.
     /// </summary>
     [ScriptedImporter(1, "ogham")]
     public class OghamImporter : ScriptedImporter
     {
         /// <summary>
-        /// Imports the <c>.ogham</c> JSON file at <c>ctx.assetPath</c>, compiling it into an
-        /// <see cref="OghamCompiledData"/> main asset and an <see cref="OghamGraphMetadata"/> secondary asset.
+        /// Imports the <c>.ogham</c> JSON file at <c>ctx.assetPath</c> as a <see cref="UnityEngine.TextAsset"/>.
         /// </summary>
         /// <param name="ctx">The import context provided by Unity's asset import pipeline.</param>
         public override void OnImportAsset(AssetImportContext ctx)
@@ -44,25 +44,18 @@ namespace Heathen.Ogham.Editor
             foreach (var path in doc.GetAllTagPaths())
                 GameplayTagRegistry.Register(path);
 
-            // Build runtime-ready compiled data (inline links → TMPro markup).
-            OghamCompiledData compiled;
-            try
-            {
-                compiled = doc.ToCompiledData();
-            }
-            catch (Exception e)
-            {
-                ctx.LogImportError($"[Ogham] Compile failed for {ctx.assetPath}: {e.Message}");
-                compiled = ScriptableObject.CreateInstance<OghamCompiledData>();
-            }
-            compiled.name = Path.GetFileNameWithoutExtension(ctx.assetPath);
-            ctx.AddObjectToAsset("main", compiled);
-            ctx.SetMainObject(compiled);
+            // The .ogham JSON is the portable source of truth and is delivered to runtime via baked code
+            // (OghamStoryGenerator → OghamStoryCatalog), so the imported asset is just the JSON text — no
+            // ScriptableObject. The graph editor edits the .ogham file directly.
+            var asset = new TextAsset(json) { name = Path.GetFileNameWithoutExtension(ctx.assetPath) };
+            ctx.AddObjectToAsset("main", asset);
+            ctx.SetMainObject(asset);
 
-            // Validate Fork termination: a fork-to-fork cycle never resolves to a node or ends the
-            // conversation, and would spin forever at runtime. Surface it on the asset at compile time.
-            var cyclicForks = OghamForkValidator.FindCyclicForks(compiled.Entries);
-            foreach (var forkId in cyclicForks)
+            // Validate Fork termination at import time: a fork-to-fork cycle never resolves to a node or
+            // ends the conversation, and would spin forever at runtime. Build a transient authoring view to check.
+            var authoring = doc.ToOghamData();
+            authoring.BuildIndex();
+            foreach (var forkId in OghamForkValidator.FindCyclicForks(authoring.Entries))
             {
                 var forkName = GameplayTagRegistry.GetName(forkId) ?? forkId.ToString("X16");
                 ctx.LogImportError(
@@ -70,22 +63,8 @@ namespace Heathen.Ogham.Editor
                     $"resolve to a node or end the conversation. ({ctx.assetPath})");
             }
 
-            // Build graph editor layout metadata from the _editor block.
-            OghamGraphMetadata meta;
-            try
-            {
-                meta = doc.ToMetadata();
-            }
-            catch (Exception e)
-            {
-                ctx.LogImportWarning($"[Ogham] Metadata parse failed for {ctx.assetPath}: {e.Message}");
-                meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
-            }
-            meta.name = compiled.name + "_editor";
-            ctx.AddObjectToAsset("meta", meta);
-
             // Inject inline localisations so the editor can resolve them without runtime play.
-            foreach (var loc in compiled.Localisations)
+            foreach (var loc in doc.GetLocalisations())
                 if (!string.IsNullOrWhiteSpace(loc.Key))
                     LexiconRegistry.SetString(loc.Key, loc.Value,
                         string.IsNullOrWhiteSpace(loc.Culture) ? null : loc.Culture);
@@ -172,8 +151,7 @@ namespace Heathen.Ogham.Editor
                 foreach (var path in oghamToCheck)
                 {
                     var p = path;
-                    var compiled = AssetDatabase.LoadAssetAtPath<OghamCompiledData>(p);
-                    if (compiled == null)
+                    if (AssetDatabase.LoadMainAssetAtPath(p) == null)
                         EditorApplication.delayCall += () =>
                             AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate);
                 }
@@ -214,25 +192,47 @@ namespace Heathen.Ogham.Editor
         public override void OnInspectorGUI()
         {
             var importer = (OghamImporter)target;
-            var compiled = AssetDatabase.LoadAssetAtPath<OghamCompiledData>(importer.assetPath);
 
             EditorGUILayout.LabelField("Source", EditorStyles.boldLabel);
             EditorGUILayout.LabelField("Path", importer.assetPath, EditorStyles.miniLabel);
 
-            if (compiled != null)
+            try
             {
+                var doc      = OghamJsonDocument.Parse(File.ReadAllText(importer.assetPath));
+                var manifest = doc.ToManifest();
+
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Story", EditorStyles.boldLabel);
+
+                // Story Tag is editable here (a story's "name" is a GameplayTag). Editing rewrites the
+                // .ogham source and reimports. If the file is open in the Ogham graph editor, set it there
+                // instead so it saves together with your graph edits.
+                EditorGUI.BeginChangeCheck();
+                string newTag = EditorGUILayout.DelayedTextField(
+                    new GUIContent("Story Tag", "The GameplayTag that identifies this story (its name), e.g. Story.MainQuest."),
+                    doc.StoryTag);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    var trimmed = newTag?.Trim() ?? string.Empty;
+                    if (trimmed != doc.StoryTag)
+                    {
+                        doc.SetStoryTag(trimmed);
+                        File.WriteAllText(importer.assetPath, doc.ToJson());
+                        AssetDatabase.ImportAsset(importer.assetPath);
+                        GUIUtility.ExitGUI(); // asset reimported; exit this IMGUI pass cleanly
+                    }
+                }
+
                 EditorGUI.BeginDisabledGroup(true);
-                EditorGUILayout.TextField("Story Tag", compiled.StoryTagPath);
-                EditorGUILayout.IntField("Entries", compiled.Entries?.Count ?? 0);
-                EditorGUILayout.IntField("Localisations", compiled.Localisations?.Length ?? 0);
+                EditorGUILayout.IntField("Entries", manifest.Entries?.Count ?? 0);
+                EditorGUILayout.IntField("Localisations", manifest.Localisations?.Count ?? 0);
                 EditorGUI.EndDisabledGroup();
 
                 EditorGUILayout.Space();
                 if (GUILayout.Button("Open in Graph Editor"))
                     OghamGraphEditorWindow.OpenOghamFile(importer.assetPath);
             }
+            catch { /* unparsable or unreadable .ogham — show path only */ }
 
             EditorGUILayout.Space();
             ApplyRevertGUI();

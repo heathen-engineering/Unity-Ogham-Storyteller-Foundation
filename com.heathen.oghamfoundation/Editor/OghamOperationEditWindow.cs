@@ -426,7 +426,7 @@ namespace Heathen.Ogham.Editor
                 _item.Conditions.Add(cond);
             }
 
-            EditorUtility.SetDirty(_asset);
+            // _asset (OghamData) persists via the .ogham JSON on save; nothing to dirty.
             _onCommit?.Invoke();
             Close();
         }

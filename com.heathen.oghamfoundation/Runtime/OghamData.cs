@@ -5,20 +5,21 @@ using Heathen.GameplayTags;
 namespace Heathen.Ogham
 {
     /// <summary>
-    /// Authoring asset that holds the raw <see cref="DialogueEntry"/> list for a portion of a story.
-    /// Used directly in the graph editor and during editor iteration; compiled into <see cref="OghamCompiledData"/>
-    /// for player builds. Register with an <see cref="OghamStory"/> via <see cref="OghamStory.RegisterData(OghamData)"/>.
+    /// Holds the raw <see cref="DialogueEntry"/> list for a portion of a story. A plain class (no longer a
+    /// ScriptableObject): the portable <c>.ogham</c> JSON is the source of truth and is baked to code for
+    /// runtime; this is an in-memory authoring/iteration model. Register with an <see cref="OghamStory"/> via
+    /// <see cref="OghamStory.RegisterData(OghamData)"/>. The index builds lazily on first lookup.
     /// </summary>
-    [CreateAssetMenu(menuName = "Heathen/Ogham/Dialogue Data", fileName = "OghamData")]
-    public class OghamData : ScriptableObject
+    public class OghamData
     {
-        /// <summary>All dialogue entries authored in this data asset.</summary>
+        /// <summary>All dialogue entries authored in this data.</summary>
         public List<DialogueEntry> Entries = new();
+
+        /// <summary>Display name (typically the .ogham file name); set by the editor on load.</summary>
+        public string Name = string.Empty;
 
         private Dictionary<ulong, DialogueEntry> _index;
         private Dictionary<ulong, HashSet<ulong>> _childIndex;
-
-        private void OnEnable() => BuildIndex();
 
         /// <summary>
         /// Finds and returns the dialogue entry whose tag matches <paramref name="tag"/>, or <c>null</c> if not found.
@@ -66,8 +67,7 @@ namespace Heathen.Ogham
 
         /// <summary>
         /// Rebuilds the internal tag-ID-to-entry and parent-to-child lookup dictionaries from <see cref="Entries"/>.
-        /// Called automatically on <c>OnEnable</c> and <c>OnValidate</c>; call manually after modifying
-        /// <see cref="Entries"/> at runtime or in the editor.
+        /// Built lazily on first lookup; call manually after modifying <see cref="Entries"/>.
         /// </summary>
         public void BuildIndex()
         {
@@ -149,8 +149,7 @@ namespace Heathen.Ogham
                 }
             }
 
-            if (dirty)
-                UnityEditor.EditorUtility.SetDirty(this);
+            // Synthesised inline-link options ('dirty') persist via the .ogham JSON on save; nothing to dirty.
         }
 
         // optionTagPath is the dot-path of the option this inline link refers to (Ogham:// prefix already stripped).

@@ -886,16 +886,18 @@ namespace Heathen.Ogham.Editor
 
         private void ShowLinkTargetPicker()
         {
-            var tags  = new List<string>();
-            var guids = AssetDatabase.FindAssets("t:OghamData");
-            foreach (var guid in guids)
+            var tags = new List<string>();
+            // OghamData is no longer an asset; gather node tags from the .ogham JSON sources.
+            foreach (var full in System.IO.Directory.GetFiles(UnityEngine.Application.dataPath, "*.ogham", System.IO.SearchOption.AllDirectories))
             {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                var data = AssetDatabase.LoadAssetAtPath<OghamData>(path);
-                if (data == null) continue;
-                foreach (var entry in data.Entries)
-                    if (!string.IsNullOrEmpty(entry.TagPath) && !tags.Contains(entry.TagPath))
-                        tags.Add(entry.TagPath);
+                try
+                {
+                    var manifest = OghamJsonDocument.Parse(System.IO.File.ReadAllText(full)).ToManifest();
+                    foreach (var e in manifest.Entries)
+                        if (!string.IsNullOrEmpty(e.TagPath) && !tags.Contains(e.TagPath))
+                            tags.Add(e.TagPath);
+                }
+                catch { /* skip unreadable / unparsable */ }
             }
             tags.Sort(StringComparer.Ordinal);
 
@@ -1101,7 +1103,7 @@ namespace Heathen.Ogham.Editor
             }
 
             if (IsText) SaveColor();
-            EditorUtility.SetDirty(_asset);
+            // _asset (OghamData) persists via the .ogham JSON on save; nothing to dirty.
             _onCommit?.Invoke();
             Close();
         }

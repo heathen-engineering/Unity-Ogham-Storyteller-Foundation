@@ -3,19 +3,19 @@ using Heathen.GameplayTags;
 namespace Heathen.Ogham
 {
     /// <summary>
-    /// Immutable developer-facing wrapper around a single dialogue option, produced by <see cref="OghamStory"/> when
-    /// a node is entered. Call <see cref="Choose"/> to advance the conversation; this method can be wired directly
-    /// to a UI button's <c>onClick</c> event without requiring a reference to <see cref="Storyteller"/>.
+    /// Immutable developer-facing wrapper around a single dialogue option, produced by <see cref="OghamSession"/>
+    /// when a node is entered. Call <see cref="Choose"/> to advance the conversation; this method can be wired
+    /// directly to a UI button's <c>onClick</c> event without requiring a reference to <see cref="Storyteller"/>.
     /// </summary>
     public sealed class StoryOption
     {
         private readonly DialogueOption _option;
-        private readonly OghamStory     _story;
+        private readonly OghamSession   _session;
 
-        internal StoryOption(DialogueOption option, OghamStory story)
+        internal StoryOption(DialogueOption option, OghamSession session)
         {
-            _option = option;
-            _story  = story;
+            _option  = option;
+            _session = session;
         }
 
         /// <summary>The GameplayTag that uniquely identifies this option.</summary>
@@ -40,7 +40,7 @@ namespace Heathen.Ogham
         /// Advances the conversation by selecting this option, applying its operations, and navigating to its target.
         /// Safe to wire directly to a UI button. Silently does nothing when <see cref="IsActive"/> is <c>false</c>.
         /// </summary>
-        public void Choose() => _story.Choose(_option.ResolvedTag);
+        public void Choose() => _session.Choose(_option.ResolvedTag);
 
         internal DialogueOption RawOption => _option;
     }

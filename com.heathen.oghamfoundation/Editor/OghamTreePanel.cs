@@ -196,18 +196,14 @@ namespace Heathen.Ogham.Editor
             }
 
             // Label: clicking pings the file in the Project window.
-            var label = new Label(asset.name) { style = { flexGrow = 1f } };
+            var label = new Label(asset.Name) { style = { flexGrow = 1f } };
             label.RegisterCallback<ClickEvent>(_ =>
             {
                 string path = PathResolver?.Invoke(asset);
                 if (!string.IsNullOrEmpty(path))
                 {
                     var fileObj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path);
-                    EditorGUIUtility.PingObject(fileObj != null ? fileObj : (UnityEngine.Object)asset);
-                }
-                else
-                {
-                    EditorGUIUtility.PingObject(asset);
+                    if (fileObj != null) EditorGUIUtility.PingObject(fileObj);
                 }
             });
             row.Add(label);

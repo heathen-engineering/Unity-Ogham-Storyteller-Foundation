@@ -15,26 +15,39 @@ namespace Heathen.Ogham.Editor
     /// </summary>
     public class OghamPlayWindow : EditorWindow
     {
+        /// <summary>True when a test-play window is currently open.</summary>
+        public static bool IsOpen => Resources.FindObjectsOfTypeAll<OghamPlayWindow>().Length > 0;
+
+        /// <summary>Closes any open test-play window.</summary>
+        public static void CloseIfOpen()
+        {
+            foreach (var w in Resources.FindObjectsOfTypeAll<OghamPlayWindow>())
+                w.Close();
+        }
+
         /// <summary>
-        /// Opens the play window as a modal dialog, loading the given assets and optionally starting at the
-        /// entry identified by <paramref name="startTagPath"/>.
+        /// Opens the test-play window — a unit-test-style runner that steps the story logic on the live source
+        /// (no build, no game simulation) — loading the given assets and optionally starting at
+        /// <paramref name="startTagPath"/>. Non-modal, so it runs alongside the graph.
         /// </summary>
         /// <param name="assets">The authoring assets to load into the play session.</param>
         /// <param name="startTagPath">The dot-path tag of the entry to pre-select. <c>null</c> means no pre-selection.</param>
         public static void Open(IEnumerable<OghamData> assets, string startTagPath = null)
         {
+            CloseIfOpen(); // one runner at a time
             var w = CreateInstance<OghamPlayWindow>();
-            w.titleContent = new GUIContent("Ogham Play");
+            w.titleContent = new GUIContent("Ogham Test Play");
             w._assets.Clear();
             w._assets.AddRange(assets);
             w.BuildTagList(startTagPath);
             w.ResetStory();
             w.minSize = new Vector2(700f, 520f);
-            w.ShowModal();
+            w.Show();
         }
 
         private readonly List<OghamData> _assets = new();
-        private OghamStory _story;
+        private OghamStory   _definition;
+        private OghamSession _story;
 
         private StoryNode _current;
         private Vector2   _stateScroll;
@@ -134,14 +147,15 @@ namespace Heathen.Ogham.Editor
                 _story.OnEntered -= HandleEntered;
                 _story.OnClosed  -= HandleClosed;
             }
-            _story   = new OghamStory(new GameplayTag(GameplayTagRegistry.Hash("Editor.Play")));
-            _current = null;
+            _definition = new OghamStory(new GameplayTag(GameplayTagRegistry.Hash("Editor.Play")));
+            _story      = _definition.CreateSession();
+            _current    = null;
             _tagNames.Clear();
 
             foreach (var asset in _assets)
             {
                 if (asset == null) continue;
-                _story.RegisterData(asset);
+                _definition.RegisterData(asset);
                 foreach (var entry in asset.Entries)
                 {
                     if (entry.Tag.IsValid) _tagNames[entry.Tag.Id] = entry.TagPath;

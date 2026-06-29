@@ -6,6 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
 using Heathen.Ogham;
+using Heathen.Editor; // framework UndoHistory
 
 namespace Heathen.Ogham.Editor
 {
@@ -51,6 +52,17 @@ namespace Heathen.Ogham.Editor
         // Key: synthetic OghamData. Value: (parsed document, AssetDatabase-relative path).
         private readonly Dictionary<OghamData, (OghamJsonDocument Doc, string Path)> _jsonBacked = new();
 
+        // Per-asset undo history of .ogham JSON snapshots (the framework's serialise-based undo). Edits are
+        // debounced into one snapshot once activity settles, so a drag becomes a single undo step.
+        private readonly Dictionary<OghamData, UndoHistory<string>> _undo = new();
+        private readonly Dictionary<OghamData, double> _pendingSnapshots = new();
+        private bool _snapshotTickHooked;
+        private bool _restoring;
+        // True when authored changes have not been built (code generated) since the last build. Drives the
+        // amber Build button and the build-on-close prompt. "Save" writes the source; "Build" generates code.
+        private bool _needsBuild;
+        private const double SnapshotDebounceSeconds = 0.3;
+
         private void CreateGUI()
         {
             _canvas = new OghamCanvas(this);
@@ -84,6 +96,9 @@ namespace Heathen.Ogham.Editor
             _canvas.OnGraphChanged       += () => _treePanel.Rebuild();
             _canvas.OnSaveRequested      += SaveOghamFiles;
             _canvas.OnActiveAssetChanged += _treePanel.Rebuild;
+            _canvas.AssetEdited          += OnAssetEdited;
+            _canvas.OnUndoRequested      += UndoActiveAsset;
+            _canvas.OnRedoRequested      += RedoActiveAsset;
             _treePanel.NameResolver    = _canvas.ResolveEntryName;
             _treePanel.ColorGetter     = data => _canvas.GetAssetColor(data);
             _treePanel.ColorSetter     = (data, color) => { _canvas.SetAssetColor(data, color); Repaint(); };
@@ -150,11 +165,40 @@ namespace Heathen.Ogham.Editor
         {
             EditorApplication.projectChanged -= OnProjectChanged;
 
+            // Offer to build on a genuine window close (not on a domain reload or entering Play, which the
+            // framework play-guard handles). Save synchronously while the canvas is alive, then defer the
+            // generate + recompile to a clean tick.
+            bool genuineClose = !EditorApplication.isCompiling
+                              && !EditorApplication.isUpdating
+                              && !EditorApplication.isPlayingOrWillChangePlaymode;
+            if (_needsBuild && genuineClose && _jsonBacked.Count > 0 &&
+                EditorUtility.DisplayDialog("Ogham — unbuilt changes",
+                    "Story changes haven't been built. Build now so they take effect in Play and in builds?",
+                    "Build", "Don't Build"))
+            {
+                SaveOghamFiles();
+                var paths = _jsonBacked.Values.Select(v => v.Path).ToList();
+                _needsBuild = false;
+                EditorApplication.delayCall += () =>
+                {
+                    foreach (var p in paths) OghamStoryGenerator.Generate(p);
+                    Heathen.Lexicon.Editor.LexiconAddressables.Save();
+                    AssetDatabase.Refresh();
+                };
+            }
+
             if (_canvas != null)
             {
                 _canvas.OnSaveRequested      -= SaveOghamFiles;
                 _canvas.OnActiveAssetChanged -= _treePanel.Rebuild;
+                _canvas.AssetEdited          -= OnAssetEdited;
+                _canvas.OnUndoRequested      -= UndoActiveAsset;
+                _canvas.OnRedoRequested      -= RedoActiveAsset;
             }
+
+            if (_snapshotTickHooked) { EditorApplication.update -= SnapshotTick; _snapshotTickHooked = false; }
+            _undo.Clear();
+            _pendingSnapshots.Clear();
 
             if (_treePanel != null)
             {
@@ -163,15 +207,109 @@ namespace Heathen.Ogham.Editor
                 _treePanel.OnAssetClosed   -= HandleAssetClosed;
             }
 
-            // Destroy synthetic ScriptableObjects (created from .ogham JSON files, not in AssetDatabase)
-            // so they don't accumulate in Unity's object system across assembly reloads.
+            // Synthetic in-memory models (built from .ogham JSON, not assets) are plain objects now —
+            // just drop the references and let the GC reclaim them.
             foreach (var kv in _jsonBacked)
-            {
-                if (_canvas != null) { var m = _canvas.GetMeta(kv.Key); if (m != null) UnityEngine.Object.DestroyImmediate(m); }
-                _openAssets.Remove(kv.Key); // evict before destroy so LoadAllAssets re-discovers from file
-                if (kv.Key != null) UnityEngine.Object.DestroyImmediate(kv.Key);
-            }
+                _openAssets.Remove(kv.Key);
             _jsonBacked.Clear();
+        }
+
+        // ── Undo (framework UndoHistory over .ogham JSON snapshots) ──────────────
+
+        private void OnAssetEdited(OghamData asset)
+        {
+            if (_restoring || asset == null) return;
+            _needsBuild = true; // an edit means the generated code is now behind the source
+            _pendingSnapshots[asset] = EditorApplication.timeSinceStartup;
+            if (!_snapshotTickHooked) { EditorApplication.update += SnapshotTick; _snapshotTickHooked = true; }
+        }
+
+        // Debounce: snapshot an asset once its edits settle, so a drag becomes a single undo step.
+        private void SnapshotTick()
+        {
+            if (_pendingSnapshots.Count == 0)
+            {
+                EditorApplication.update -= SnapshotTick;
+                _snapshotTickHooked = false;
+                return;
+            }
+
+            double now = EditorApplication.timeSinceStartup;
+            List<OghamData> ready = null;
+            foreach (var kv in _pendingSnapshots)
+                if (now - kv.Value >= SnapshotDebounceSeconds)
+                    (ready ??= new List<OghamData>()).Add(kv.Key);
+
+            if (ready != null)
+                foreach (var asset in ready)
+                {
+                    _pendingSnapshots.Remove(asset);
+                    SnapshotForUndo(asset);
+                }
+        }
+
+        private void SnapshotForUndo(OghamData asset)
+        {
+            if (!_jsonBacked.TryGetValue(asset, out var jb) || !_undo.TryGetValue(asset, out var history)) return;
+            jb.Doc.SyncFrom(asset, _canvas?.GetMeta(asset));
+            history.Push(jb.Doc.ToJson());
+        }
+
+        // Commit any debounced snapshot for the active asset before an undo/redo so the latest edit is captured.
+        private void FlushPending(OghamData asset)
+        {
+            if (asset != null && _pendingSnapshots.Remove(asset)) SnapshotForUndo(asset);
+        }
+
+        private void UndoActiveAsset()
+        {
+            var asset = _canvas?.ActiveAsset;
+            FlushPending(asset);
+            if (asset == null || !_undo.TryGetValue(asset, out var history) || !history.CanUndo) return;
+            RestoreSnapshot(asset, history.Undo());
+        }
+
+        private void RedoActiveAsset()
+        {
+            var asset = _canvas?.ActiveAsset;
+            FlushPending(asset);
+            if (asset == null || !_undo.TryGetValue(asset, out var history) || !history.CanRedo) return;
+            RestoreSnapshot(asset, history.Redo());
+        }
+
+        private void RestoreSnapshot(OghamData asset, string json)
+        {
+            if (asset == null || string.IsNullOrEmpty(json) || !_jsonBacked.TryGetValue(asset, out var jb)) return;
+
+            _restoring = true;
+            try
+            {
+                var doc      = OghamJsonDocument.Parse(json);
+                var restored = doc.ToOghamData();
+                var meta     = _canvas?.GetMeta(asset);
+
+                // Mutate in place to preserve the object identities used as dictionary keys.
+                asset.Entries.Clear();
+                asset.Entries.AddRange(restored.Entries);
+                asset.BuildIndex();
+
+                if (meta != null)
+                {
+                    var restoredMeta = doc.ToMetadata();
+                    meta.Nodes.Clear();
+                    meta.Nodes.AddRange(restoredMeta.Nodes);
+                    meta.ViewTransform = restoredMeta.ViewTransform;
+                }
+
+                _jsonBacked[asset] = (doc, jb.Path);
+
+                // Rebuild the canvas view for this asset from the restored data + meta.
+                _canvas?.UnloadAsset(asset);
+                _canvas?.LoadSyntheticAsset(asset, meta);
+                _treePanel?.Rebuild();
+                Repaint();
+            }
+            finally { _restoring = false; }
         }
 
         /// <summary>
@@ -243,11 +381,15 @@ namespace Heathen.Ogham.Editor
             var data = doc.ToOghamData();
             var meta = doc.ToMetadata();
 
-            data.name = Path.GetFileNameWithoutExtension(assetPath);
-            meta.name = data.name + "_editor";
+            data.Name = Path.GetFileNameWithoutExtension(assetPath);
+            meta.Name = data.Name + "_editor";
             data.BuildIndex(); // synthesise inline-link options for the graph editor
 
             _jsonBacked[data] = (doc, assetPath);
+            if (OghamStoryGenerator.IsStale(assetPath)) _needsBuild = true; // opened with unbuilt changes
+            var history = new UndoHistory<string>();
+            history.Push(doc.ToJson()); // initial state
+            _undo[data] = history;
             _openAssets.Add(data);
             _canvas?.LoadSyntheticAsset(data, meta);
             _treePanel?.AddAsset(data);
@@ -266,8 +408,7 @@ namespace Heathen.Ogham.Editor
                 try
                 {
                     File.WriteAllText(path, doc.ToJson());
-                    AssetDatabase.ImportAsset(path); // refresh compiled sub-assets
-                    EditorUtility.ClearDirty(data);
+                    AssetDatabase.ImportAsset(path); // re-import the .ogham TextAsset
                 }
                 catch (Exception e)
                 {
@@ -288,7 +429,7 @@ namespace Heathen.Ogham.Editor
             // Path-based match — works in the same postprocess frame while refs are still valid.
             var toClose = new System.Collections.Generic.List<OghamData>();
             foreach (var a in _openAssets)
-                if (a != null && pathSet.Contains(AssetDatabase.GetAssetPath(a)))
+                if (a != null && _jsonBacked.TryGetValue(a, out var jb) && pathSet.Contains(jb.Path))
                     toClose.Add(a);
             foreach (var a in toClose)
                 HandleAssetClosed(a);
@@ -314,16 +455,7 @@ namespace Heathen.Ogham.Editor
                 _treePanel?.AddAsset(asset);
             }
 
-            // Load .asset OghamData files.
-            var guids = AssetDatabase.FindAssets("t:OghamData");
-            foreach (var guid in guids)
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                var data = AssetDatabase.LoadAssetAtPath<OghamData>(path);
-                if (data != null) LoadAsset(data);
-            }
-
-            // Load .ogham source files (synthetic assets, not in AssetDatabase).
+            // Load .ogham source files (the in-memory authoring model; OghamData is no longer an asset).
             var dataPath = Application.dataPath;
             if (!Directory.Exists(dataPath)) return;
             foreach (var absPath in Directory.GetFiles(dataPath, "*.ogham", SearchOption.AllDirectories))
@@ -380,40 +512,51 @@ namespace Heathen.Ogham.Editor
 
         // ── Toolbar ───────────────────────────────────────────────────────────
 
+        private const float TbBtn = 30f;
+
         private void DrawToolbar()
         {
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
-                if (GUILayout.Button(new GUIContent("Support", "Join the Heathen community on Discord"),
-                    EditorStyles.toolbarButton, GUILayout.Width(58)))
-                    Application.OpenURL("https://discord.gg/tytrBwwHZe");
-
-                if (GUILayout.Button(new GUIContent("Docs", "Open Heathen documentation"),
-                    EditorStyles.toolbarButton, GUILayout.Width(40)))
-                    Application.OpenURL("https://heathen.group/");
+                // ── Left: story identity, save, build ──
+                var active = _canvas?.ActiveAsset;
+                if (active != null && _jsonBacked.TryGetValue(active, out var activeJb))
+                {
+                    GUILayout.Label("Story Tag:", EditorStyles.miniLabel, GUILayout.Width(58));
+                    EditorGUI.BeginChangeCheck();
+                    string newTag = EditorGUILayout.DelayedTextField(activeJb.Doc.StoryTag,
+                        EditorStyles.toolbarTextField, GUILayout.Width(170));
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        var trimmed = newTag?.Trim() ?? string.Empty;
+                        if (trimmed != activeJb.Doc.StoryTag)
+                        {
+                            activeJb.Doc.SetStoryTag(trimmed);
+                            SaveOghamFiles();   // persist the tag (with any pending edits)
+                            _needsBuild = true; // identity changed → code is behind
+                        }
+                    }
+                }
 
                 if (_jsonBacked.Count > 0)
                 {
-                    GUILayout.Space(4f);
-                    bool isDirty = _jsonBacked.Keys.Any(a => a != null && EditorUtility.IsDirty(a));
-                    var savedBg = GUI.backgroundColor;
-                    if (isDirty) GUI.backgroundColor = new Color(1f, 0.85f, 0.2f);
-                    if (GUILayout.Button("Save .ogham", EditorStyles.toolbarButton, GUILayout.Width(84)))
+                    if (GUILayout.Button(ToolbarIcon("SaveActive", "Save the .ogham source (does not build)", "Save"),
+                        EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
                         SaveOghamFiles();
+
+                    var savedBg = GUI.backgroundColor;
+                    if (_needsBuild) GUI.backgroundColor = new Color(1f, 0.85f, 0.2f);
+                    if (GUILayout.Button(ToolbarIcon("BuildSettings.Editor.Small",
+                            _needsBuild ? "Build — generate code. Changes need building before Play."
+                                        : "Build — generate code (up to date)", "Build"),
+                        EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
+                        BuildStories();
                     GUI.backgroundColor = savedBg;
                 }
 
-                GUILayout.Space(8f);
-
-                var savedSnapBg = GUI.backgroundColor;
-                if (_snapToGrid) GUI.backgroundColor = new Color(0.45f, 0.75f, 1f);
-                var newSnap = GUILayout.Toggle(_snapToGrid, "Snap", EditorStyles.toolbarButton, GUILayout.Width(48));
-                GUI.backgroundColor = savedSnapBg;
-                if (newSnap != _snapToGrid) { _snapToGrid = newSnap; if (_canvas != null) _canvas.SnapToGrid = newSnap; }
-
                 GUILayout.FlexibleSpace();
 
-                // Zoom slider: left = 100% (zoom=1), right = 15% (zoom=0.15). No value label.
+                // ── Centre: zoom + in-graph test-play (runs on source, no build) ──
                 if (_canvas != null)
                 {
                     float sliderVal = 1f - (_canvas.Zoom - 0.15f) / (1f - 0.15f);
@@ -422,31 +565,78 @@ namespace Heathen.Ogham.Editor
                         _canvas.SetZoom(Mathf.Lerp(1f, 0.15f, newSlider));
                 }
 
+                bool testPlaying = OghamPlayWindow.IsOpen;
+                var playContent  = testPlaying
+                    ? new GUIContent("■", "Stop the test-play runner")
+                    : ToolbarIcon("PlayButton", "Test-play the story logic on the source (no build, no game simulation)", "▶");
+                if (GUILayout.Button(playContent, EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
+                {
+                    if (testPlaying) OghamPlayWindow.CloseIfOpen();
+                    else             OghamPlayWindow.Open(_openAssets, _canvas?.SelectedEntryTagPath);
+                }
+
                 GUILayout.FlexibleSpace();
 
-                if (GUILayout.Button("Layout",     EditorStyles.toolbarButton, GUILayout.Width(52)))
+                // ── Right: view, IO, help ──
+                var savedSnapBg = GUI.backgroundColor;
+                if (_snapToGrid) GUI.backgroundColor = new Color(0.45f, 0.75f, 1f);
+                var newSnap = GUILayout.Toggle(_snapToGrid,
+                    ToolbarIcon("d_SceneViewSnap", "Snap nodes to grid", "Snap"),
+                    EditorStyles.toolbarButton, GUILayout.Width(TbBtn));
+                GUI.backgroundColor = savedSnapBg;
+                if (newSnap != _snapToGrid) { _snapToGrid = newSnap; if (_canvas != null) _canvas.SnapToGrid = newSnap; }
+
+                if (GUILayout.Button(ToolbarIcon("d_Grid.Default", "Auto-layout the graph", "Layout"),
+                    EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
                     _canvas.AutoLayout();
 
-                if (GUILayout.Button("Compile…",  EditorStyles.toolbarButton, GUILayout.Width(74)))
-                    ShowCompileDialog();
-
-                if (GUILayout.Button("Play",       EditorStyles.toolbarButton, GUILayout.Width(48)))
-                    OghamPlayWindow.Open(_openAssets, _canvas.SelectedEntryTagPath);
-
-                if (GUILayout.Button("Import…",    EditorStyles.toolbarButton, GUILayout.Width(64)))
+                if (GUILayout.Button(ToolbarIcon("Import", "Import…", "Import"),
+                    EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
                     ShowImportMenu();
 
-                if (GUILayout.Button("Export…",    EditorStyles.toolbarButton, GUILayout.Width(64)))
+                if (GUILayout.Button(ToolbarIcon("SaveAs", "Export…", "Export"),
+                    EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
                     ShowExportWindow();
 
-                if (GUILayout.Button(new GUIContent("⚙", "Open Ogham Editor Settings in Inspector"),
-                    EditorStyles.toolbarButton, GUILayout.Width(26)))
-                {
-                    var settings = OghamEditorSettings.GetOrCreate();
-                    Selection.activeObject = settings;
-                    EditorGUIUtility.PingObject(settings);
-                }
+                if (GUILayout.Button(ToolbarIcon("_Help", "Help, documentation & settings", "Help"),
+                    EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
+                    ShowHelpMenu();
             }
+        }
+
+        // Returns a GUIContent using the named built-in editor icon, falling back to text when the icon name
+        // is not present in this Unity version (so the toolbar is always usable).
+        private static GUIContent ToolbarIcon(string iconName, string tooltip, string fallbackText)
+        {
+            var c = EditorGUIUtility.IconContent(iconName);
+            return (c != null && c.image != null)
+                ? new GUIContent(c.image, tooltip)
+                : new GUIContent(fallbackText, tooltip);
+        }
+
+        // Build = generate code for the open stories (needed for Play mode). Saves first so the build reflects
+        // the current source, then regenerates and triggers a recompile.
+        private void BuildStories()
+        {
+            SaveOghamFiles();
+            int built = 0;
+            foreach (var kv in _jsonBacked)
+                if (OghamStoryGenerator.Generate(kv.Value.Path)) built++;
+            Heathen.Lexicon.Editor.LexiconAddressables.Save(); // persist addressable marking for baked assets
+            AssetDatabase.Refresh(); // compile the generated code
+            _needsBuild = false;
+            Debug.Log($"[Ogham] Built {built} story file(s).");
+        }
+
+        private void ShowHelpMenu()
+        {
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Settings"), false,
+                () => SettingsService.OpenProjectSettings("Project/Subsystems/Ogham Storyteller"));
+            menu.AddSeparator(string.Empty);
+            menu.AddItem(new GUIContent("Documentation"), false, () => Application.OpenURL("https://heathen.group/"));
+            menu.AddItem(new GUIContent("Support (Discord)"), false, () => Application.OpenURL("https://discord.gg/tytrBwwHZe"));
+            menu.ShowAsContext();
         }
 
         // ── Import ────────────────────────────────────────────────────────────
@@ -500,13 +690,7 @@ namespace Heathen.Ogham.Editor
 
         // ── New file ──────────────────────────────────────────────────────────
 
-        private void ShowNewAssetDialog()
-        {
-            var menu = new GenericMenu();
-            menu.AddItem(new GUIContent("New .ogham file"), false, ShowNewOghamFileDialog);
-            menu.AddItem(new GUIContent("New .asset file (legacy)"), false, ShowNewLegacyAssetDialog);
-            menu.ShowAsContext();
-        }
+        private void ShowNewAssetDialog() => ShowNewOghamFileDialog();
 
         private void ShowNewOghamFileDialog()
         {
@@ -518,80 +702,6 @@ namespace Heathen.Ogham.Editor
             File.WriteAllText(path, doc.ToJson());
             AssetDatabase.ImportAsset(path);
             LoadOghamFile(path);
-        }
-
-        private void ShowNewLegacyAssetDialog()
-        {
-            var path = EditorUtility.SaveFilePanelInProject(
-                "New Dialogue File", "OghamData", "asset",
-                "Create a new Ogham dialogue data file.", "Assets");
-            if (string.IsNullOrEmpty(path)) return;
-            var data = ScriptableObject.CreateInstance<OghamData>();
-            AssetDatabase.CreateAsset(data, path);
-            AssetDatabase.SaveAssets();
-            LoadAsset(data);
-        }
-
-        // ── Compile ───────────────────────────────────────────────────────────
-
-        private void ShowCompileDialog()
-        {
-            if (_openAssets.Count == 0)
-            {
-                EditorUtility.DisplayDialog("Ogham", "Open at least one dialogue file first.", "OK");
-                return;
-            }
-            var guids = AssetDatabase.FindAssets("t:OghamCompiledData");
-            if (guids.Length == 0)
-            {
-                var p = EditorUtility.SaveFilePanelInProject(
-                    "Create Compiled Story", "OghamStory", "asset",
-                    "Choose where to save the compiled story asset.", "Assets");
-                if (!string.IsNullOrEmpty(p)) CompileInto(p);
-            }
-            else if (guids.Length == 1)
-            {
-                CompileInto(AssetDatabase.GUIDToAssetPath(guids[0]));
-            }
-            else
-            {
-                var menu = new GenericMenu();
-                foreach (var g in guids)
-                {
-                    var p = AssetDatabase.GUIDToAssetPath(g);
-                    menu.AddItem(new GUIContent(Path.GetFileNameWithoutExtension(p)), false,
-                        () => CompileInto(p));
-                }
-                menu.AddSeparator(string.Empty);
-                menu.AddItem(new GUIContent("New compiled story…"), false, () =>
-                {
-                    var np = EditorUtility.SaveFilePanelInProject(
-                        "Create Compiled Story", "OghamStory", "asset",
-                        "Choose where to save the compiled story asset.", "Assets");
-                    if (!string.IsNullOrEmpty(np)) CompileInto(np);
-                });
-                menu.ShowAsContext();
-            }
-        }
-
-        private void CompileInto(string assetPath)
-        {
-            OghamCompiledData compiled;
-            if (!File.Exists(assetPath) || AssetDatabase.LoadAssetAtPath<OghamCompiledData>(assetPath) == null)
-            {
-                compiled = ScriptableObject.CreateInstance<OghamCompiledData>();
-                AssetDatabase.CreateAsset(compiled, assetPath);
-            }
-            else
-            {
-                compiled = AssetDatabase.LoadAssetAtPath<OghamCompiledData>(assetPath);
-            }
-            Undo.RecordObject(compiled, "Compile Story");
-            compiled.SetSourceFiles(_openAssets);
-            compiled.Compile();
-            AssetDatabase.SaveAssetIfDirty(compiled);
-            EditorUtility.DisplayDialog("Ogham",
-                $"Compiled {_openAssets.Count} source file(s) into\n{assetPath}", "OK");
         }
 
         // ── Add entry ─────────────────────────────────────────────────────────
@@ -612,18 +722,17 @@ namespace Heathen.Ogham.Editor
             foreach (var asset in _openAssets)
             {
                 var cap = asset;
-                menu.AddItem(new GUIContent(asset.name), false, () => AddRootEntry(cap));
+                menu.AddItem(new GUIContent(asset.Name), false, () => AddRootEntry(cap));
             }
             menu.ShowAsContext();
         }
 
         private void AddRootEntry(OghamData asset)
         {
-            Undo.RecordObject(asset, "Add Entry");
             var entry = new DialogueEntry();
             asset.Entries.Add(entry);
             asset.BuildIndex();
-            EditorUtility.SetDirty(asset);
+            // asset (OghamData) persists via the .ogham JSON on save; undo lands with UndoHistory (increment 3).
             _canvas.AddEntry(asset, entry, _canvas.CanvasCentre);
             _treePanel.Rebuild();
         }
@@ -635,26 +744,16 @@ namespace Heathen.Ogham.Editor
 
         private void HandleAssetSelected(OghamData asset)
         {
-            Selection.activeObject = asset;
             _canvas.SetActiveAsset(asset);
         }
 
         private void HandleAssetClosed(OghamData asset)
         {
-            bool wasSynthetic = _jsonBacked.ContainsKey(asset);
-            var syntheticMeta = wasSynthetic ? _canvas?.GetMeta(asset) : null;
-
+            // Models are plain objects (built from .ogham JSON), so just drop references; GC reclaims them.
             _openAssets.Remove(asset);
             _jsonBacked.Remove(asset);
             _canvas?.UnloadAsset(asset);
             _treePanel?.RemoveAsset(asset);
-
-            // Destroy synthetic ScriptableObjects that were never added to the AssetDatabase.
-            if (wasSynthetic)
-            {
-                if (syntheticMeta != null) UnityEngine.Object.DestroyImmediate(syntheticMeta);
-                if (asset         != null) UnityEngine.Object.DestroyImmediate(asset);
-            }
         }
 
         private static bool IsInHiddenFolder(string path) => OghamImporterUtils.IsInHiddenFolder(path);

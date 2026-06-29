@@ -5,13 +5,14 @@ using UnityEngine;
 namespace Heathen.Ogham.Editor
 {
     /// <summary>
-    /// Project Settings page for the Ogham Storyteller VO export configuration. Registered under
-    /// <c>Project/Ogham Storyteller</c>. Allows the user to define and reorder content label names and
-    /// access director notes guidance.
+    /// Project Settings page for the Ogham Storyteller. Registered under <c>Project/Ogham Storyteller</c>.
+    /// Edits the VO export content labels and the graph editor preferences, both persisted as JSON in
+    /// ProjectSettings via the Game Framework settings store.
     /// </summary>
     public class OghamStorytellerSettingsProvider : SettingsProvider
     {
         private OghamStorytellerMetadata _meta;
+        private OghamEditorSettings      _editor;
         private Vector2 _scroll;
 
         private static GUIStyle s_LabelStyle;
@@ -21,35 +22,41 @@ namespace Heathen.Ogham.Editor
             alignment = TextAnchor.MiddleLeft,
         };
 
-        /// <summary>Registers this provider in the Project Settings window under <c>Project/Ogham Storyteller</c>.</summary>
-        /// <returns>A new <see cref="OghamStorytellerSettingsProvider"/> registered at the expected path.</returns>
+        /// <summary>Registers this provider in the Project Settings window under <c>Project/Subsystems/Ogham Storyteller</c>.</summary>
         [SettingsProvider]
         public static SettingsProvider Create() =>
-            new OghamStorytellerSettingsProvider("Project/Ogham Storyteller", SettingsScope.Project)
+            new OghamStorytellerSettingsProvider("Project/Subsystems/Ogham Storyteller", SettingsScope.Project)
             {
-                keywords = new System.Collections.Generic.HashSet<string>(
-                    new[] { "ogham", "storyteller", "voice", "over", "script", "labels", "heathen" }),
+                keywords = new HashSet<string>(
+                    new[] { "ogham", "storyteller", "voice", "over", "script", "labels", "link", "heathen" }),
             };
 
-        /// <summary>
-        /// Initialises the settings provider at the given path and scope.
-        /// </summary>
-        /// <param name="path">The settings window path, e.g. "Project/Ogham Storyteller".</param>
-        /// <param name="scope">The scope of these settings (Project or User).</param>
+        /// <summary>Initialises the settings provider at the given path and scope.</summary>
         public OghamStorytellerSettingsProvider(string path, SettingsScope scope)
             : base(path, scope) { }
 
         /// <inheritdoc/>
         public override void OnActivate(string searchContext, UnityEngine.UIElements.VisualElement rootElement)
         {
-            _meta = OghamStorytellerMetadata.GetOrCreate();
+            _meta   = OghamStorytellerMetadata.GetOrCreate();
+            _editor = OghamEditorSettings.GetOrCreate();
         }
 
         /// <inheritdoc/>
         public override void OnGUI(string searchContext)
         {
-            if (_meta == null) _meta = OghamStorytellerMetadata.GetOrCreate();
+            _meta   ??= OghamStorytellerMetadata.GetOrCreate();
+            _editor ??= OghamEditorSettings.GetOrCreate();
 
+            DrawContentLabels();
+            EditorGUILayout.Space(12);
+            DrawGraphEditor();
+        }
+
+        // ── VO export content labels ────────────────────────────────────────────
+
+        private void DrawContentLabels()
+        {
             EditorGUILayout.Space(6);
             EditorGUILayout.LabelField("Ogham Storyteller — VO Export Settings", LabelStyle);
             EditorGUILayout.Space(4);
@@ -65,7 +72,7 @@ namespace Heathen.Ogham.Editor
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.MaxHeight(240));
 
-            var labels = _meta.ContentLabels;
+            var labels   = _meta.ContentLabels;
             int removeAt = -1;
             int moveUp   = -1;
             int moveDown = -1;
@@ -79,9 +86,8 @@ namespace Heathen.Ogham.Editor
                     var newVal = EditorGUILayout.TextField(labels[i] ?? "", GUILayout.ExpandWidth(true));
                     if (EditorGUI.EndChangeCheck())
                     {
-                        Undo.RecordObject(_meta, "Edit Content Label");
                         labels[i] = newVal;
-                        EditorUtility.SetDirty(_meta);
+                        _meta.Save();
                     }
 
                     EditorGUI.BeginDisabledGroup(i == 0);
@@ -100,21 +106,18 @@ namespace Heathen.Ogham.Editor
 
             if (removeAt >= 0)
             {
-                Undo.RecordObject(_meta, "Remove Content Label");
                 labels.RemoveAt(removeAt);
-                EditorUtility.SetDirty(_meta);
+                _meta.Save();
             }
             if (moveUp > 0)
             {
-                Undo.RecordObject(_meta, "Reorder Content Label");
                 (labels[moveUp], labels[moveUp - 1]) = (labels[moveUp - 1], labels[moveUp]);
-                EditorUtility.SetDirty(_meta);
+                _meta.Save();
             }
             if (moveDown >= 0 && moveDown < labels.Count - 1)
             {
-                Undo.RecordObject(_meta, "Reorder Content Label");
                 (labels[moveDown], labels[moveDown + 1]) = (labels[moveDown + 1], labels[moveDown]);
-                EditorUtility.SetDirty(_meta);
+                _meta.Save();
             }
 
             EditorGUILayout.Space(4);
@@ -123,9 +126,8 @@ namespace Heathen.Ogham.Editor
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("Add Label", EditorStyles.miniButton, GUILayout.Width(80)))
                 {
-                    Undo.RecordObject(_meta, "Add Content Label");
                     labels.Add($"Key {labels.Count + 1}");
-                    EditorUtility.SetDirty(_meta);
+                    _meta.Save();
                 }
             }
 
@@ -134,6 +136,24 @@ namespace Heathen.Ogham.Editor
                 "Director Notes are per-node. Right-click any node in the graph editor and choose " +
                 "\"Edit Director Notes…\" to add guidance for the VO director.",
                 MessageType.None);
+        }
+
+        // ── Graph editor preferences ────────────────────────────────────────────
+
+        private void DrawGraphEditor()
+        {
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+                EditorGUILayout.LabelField("Graph Editor", EditorStyles.whiteLabel);
+
+            EditorGUI.BeginChangeCheck();
+            var color     = EditorGUILayout.ColorField("Default Link Colour", _editor.DefaultLinkColor);
+            var underline = EditorGUILayout.Toggle("Default Link Underline", _editor.DefaultLinkUnderline);
+            if (EditorGUI.EndChangeCheck())
+            {
+                _editor.DefaultLinkColor     = color;
+                _editor.DefaultLinkUnderline = underline;
+                _editor.Save();
+            }
         }
     }
 }

@@ -4,7 +4,7 @@ namespace Heathen.Ogham
 {
     /// <summary>
     /// Implemented by a component that drives the presentation of a single story (a "reader").
-    /// The static <see cref="Storyteller"/> owns each <see cref="OghamStory"/> and its state; a processor
+    /// The static <see cref="Storyteller"/> owns each <see cref="OghamSession"/> and its state; a processor
     /// registers itself as the active presenter for a given story id via
     /// <see cref="Storyteller.AcquireStory"/>.
     /// <para>

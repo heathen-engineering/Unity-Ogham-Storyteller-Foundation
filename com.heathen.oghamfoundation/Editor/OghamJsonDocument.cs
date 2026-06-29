@@ -66,7 +66,7 @@ namespace Heathen.Ogham.Editor
         /// <returns>A new <see cref="OghamData"/> populated from the document's entries.</returns>
         public OghamData ToOghamData()
         {
-            var data = ScriptableObject.CreateInstance<OghamData>();
+            var data = new OghamData();
             if (_root["entries"] is not JArray entries) return data;
 
             foreach (var entryNode in entries)
@@ -94,7 +94,7 @@ namespace Heathen.Ogham.Editor
         /// <returns>A new <see cref="OghamGraphMetadata"/> populated from the <c>_editor</c> block.</returns>
         public OghamGraphMetadata ToMetadata()
         {
-            var meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
+            var meta = new OghamGraphMetadata();
             if (_root["_editor"] is not JObject editor) return meta;
 
             if (editor["viewTransform"] is JArray vt && vt.Count == 3)
@@ -125,27 +125,134 @@ namespace Heathen.Ogham.Editor
         }
 
         /// <summary>
-        /// Converts the document to an <see cref="OghamCompiledData"/> runtime asset, converting inline links
-        /// to TMPro markup and dropping pure-link content keys. Used by <see cref="OghamImporter"/>.
+        /// Parses the document into a serialiser-agnostic <see cref="OghamStoryManifest"/> (the no-SO runtime
+        /// path: feed to <see cref="OghamStoryBuilder"/>, or emit as baked code). At parity with the compiled
+        /// form for tags, text, options, conditions and operations (including tag-valued operands via
+        /// <c>valueTag</c>/<c>valueType</c>). Asset content keys carry their type/mode/key; embedded literal
+        /// assets resolve through the portable Lexicon + <see cref="OghamStoryBuilder.AssetLoader"/> model
+        /// rather than an engine-specific object reference.
         /// </summary>
-        /// <returns>A new <see cref="OghamCompiledData"/> ready for use at runtime.</returns>
-        public OghamCompiledData ToCompiledData()
+        public OghamStoryManifest ToManifest()
         {
-            var compiled = ScriptableObject.CreateInstance<OghamCompiledData>();
-            compiled.StoryTagPath = StoryTag;
+            var m = new OghamStoryManifest { StoryTagPath = StoryTag };
 
-            // Build authoring entries then compile them (inline links → TMPro).
-            var authoring = ToOghamData();
-            authoring.BuildIndex(); // ensures inline-link options are synthesised
-            foreach (var entry in authoring.Entries)
-                compiled.Entries.Add(OghamCompiledData.CompileEntry(entry));
-            compiled.BuildIndex();
+            if (_root["localisations"] is JArray locs)
+                foreach (var l in locs)
+                    if (l is JObject lo)
+                        m.Localisations.Add(new OghamLocaleManifest
+                        {
+                            Culture = lo["culture"]?.Value<string>() ?? string.Empty,
+                            Key     = lo["key"]?.Value<string>()     ?? string.Empty,
+                            Value   = lo["value"]?.Value<string>()   ?? string.Empty,
+                        });
 
-            // Inline localisations.
-            compiled.Localisations = ParseLocalisations();
+            if (_root["assets"] is JArray assets)
+                foreach (var a in assets)
+                    if (a is JObject ao)
+                        m.Assets.Add(new OghamAssetManifest
+                        {
+                            LexiconKey = (ao["lexiconKey"] ?? ao["key"])?.Value<string>() ?? string.Empty,
+                            Source     = ao["source"]?.Value<string>()  ?? string.Empty,
+                            Culture    = ao["culture"]?.Value<string>() ?? string.Empty,
+                        });
 
-            ScriptableObject.DestroyImmediate(authoring);
-            return compiled;
+            if (_root["entries"] is JArray entries)
+                foreach (var e in entries)
+                    if (e is JObject eo)
+                        m.Entries.Add(ParseEntryManifest(eo));
+
+            return m;
+        }
+
+        private static OghamEntryManifest ParseEntryManifest(JObject eo)
+        {
+            var em = new OghamEntryManifest { TagPath = eo["tag"]?.Value<string>() ?? string.Empty };
+
+            if (eo["nodeMode"]?.Value<string>() is { } nodeMode && !string.IsNullOrWhiteSpace(nodeMode))
+                em.Mode = nodeMode;
+
+            if (eo["contentKeys"] is JArray ck)
+                foreach (var k in ck)
+                    if (k is JObject ko)
+                        em.ContentKeys.Add(new OghamContentManifest
+                        {
+                            Type       = ko["type"]?.Value<string>() ?? "Text",
+                            Mode       = ko["mode"]?.Value<string>() ?? "Literal",
+                            KeyOrValue = ko["key"]?.Value<string>()  ?? string.Empty,
+                            AssetGuid  = ko["assetGuid"]?.Value<string>() ?? string.Empty,
+                            AssetName  = ko["assetName"]?.Value<string>() ?? string.Empty,
+                        });
+
+            ParseOperationManifests(eo["entryOperations"] as JArray, em.EntryOperations);
+
+            if (eo["options"] is JArray opts)
+                foreach (var o in opts)
+                    if (o is JObject oo)
+                        em.Options.Add(ParseOptionManifest(oo));
+
+            return em;
+        }
+
+        private static OghamOptionManifest ParseOptionManifest(JObject oo)
+        {
+            var opt = new OghamOptionManifest
+            {
+                TagPath         = oo["tag"]?.Value<string>()                            ?? string.Empty,
+                TargetEntryPath = (oo["targetTag"] ?? oo["targetEntry"])?.Value<string>() ?? string.Empty,
+            };
+
+            if (oo["textKey"] is JValue tv)
+            {
+                opt.TextMode = oo["textMode"]?.Value<string>() ?? "Literal";
+                opt.TextKey  = tv.Value<string>() ?? string.Empty;
+            }
+            else if (oo["textKey"] is JObject tko)
+            {
+                opt.TextMode = tko["mode"]?.Value<string>() ?? "Literal";
+                opt.TextKey  = tko["key"]?.Value<string>()  ?? string.Empty;
+            }
+
+            ParseConditionManifests(oo["conditions"] as JArray, opt.Conditions);
+            ParseOperationManifests(oo["operations"] as JArray, opt.Operations);
+            return opt;
+        }
+
+        private static void ParseOperationManifests(JArray arr, List<OghamOperationManifest> ops)
+        {
+            if (arr == null) return;
+            foreach (var o in arr)
+            {
+                if (o is not JObject oo) continue;
+                var op = new OghamOperationManifest
+                {
+                    TagPath    = oo["tag"]?.Value<string>()        ?? string.Empty,
+                    Arithmetic = oo["arithmetic"]?.Value<string>() ?? "Set",
+                    Value      = oo["value"]?.Value<ulong>()       ?? 0UL,
+                    ValueTag   = oo["valueTag"]?.Value<string>()   ?? string.Empty,
+                    ValueType  = oo["valueType"]?.Value<string>()  ?? "Unsigned",
+                };
+                ParseConditionManifests(oo["conditions"] as JArray, op.Conditions);
+                ops.Add(op);
+            }
+        }
+
+        private static void ParseConditionManifests(JArray arr, List<OghamConditionManifest> conds)
+        {
+            if (arr == null) return;
+            foreach (var c in arr)
+            {
+                if (c is not JObject co) continue;
+                conds.Add(new OghamConditionManifest
+                {
+                    TagPath          = co["tag"]?.Value<string>()              ?? string.Empty,
+                    Comparison       = co["comparison"]?.Value<string>()       ?? "Exists",
+                    CompareValue     = co["compareValue"]?.Value<ulong>()      ?? 0UL,
+                    CompareTagPath   = co["compareTag"]?.Value<string>()       ?? string.Empty,
+                    CompareValueType = co["compareValueType"]?.Value<string>() ?? "Unsigned",
+                    ExactMatch       = co["exactMatch"]?.Value<bool>()         ?? true,
+                    LogicOp          = co["logicOp"]?.Value<string>()          ?? "And",
+                });
+            }
         }
 
         /// <summary>
@@ -283,7 +390,15 @@ namespace Heathen.Ogham.Editor
                 };
                 var compareTagStr = co["compareTag"]?.Value<string>();
                 if (!string.IsNullOrWhiteSpace(compareTagStr))
-                    cond.CompareTag = HashTag(compareTagStr);
+                {
+                    // A compare-tag operand implies a Tag-typed right-hand side (mirrors the condition editor).
+                    cond.CompareTag       = HashTag(compareTagStr);
+                    cond.CompareValueType = GameplayTagValueType.Tag;
+                }
+                else if (Enum.TryParse<GameplayTagValueType>(co["compareValueType"]?.Value<string>(), true, out var cvt))
+                {
+                    cond.CompareValueType = cvt;
+                }
                 conds.Add(cond);
             }
         }
@@ -552,6 +667,10 @@ namespace Heathen.Ogham.Editor
                 };
                 if (c.CompareTag.Id != 0)
                     co["compareTag"] = GameplayTagRegistry.GetName(c.CompareTag.Id);
+                // Persist a non-default value type (Signed/Decimal). The Tag case is implied by compareTag above,
+                // so it need not be written separately.
+                else if (c.CompareValueType != GameplayTagValueType.Unsigned)
+                    co["compareValueType"] = c.CompareValueType.ToString();
                 arr.Add(co);
             }
             return arr;

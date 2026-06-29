@@ -73,6 +73,20 @@ namespace Heathen.Ogham.Editor
         // ── Data ──────────────────────────────────────────────────────────────
         private readonly List<OghamData>          _assets = new();
         private readonly List<OghamGraphMetadata> _metas  = new();
+
+        /// <summary>Raised after an asset's content or layout changed, so the host can snapshot it for undo.</summary>
+        public event System.Action<OghamData> AssetEdited;
+        /// <summary>Raised on Ctrl+Z so the host can undo the active asset.</summary>
+        public event System.Action OnUndoRequested;
+        /// <summary>Raised on Ctrl+Y / Ctrl+Shift+Z so the host can redo the active asset.</summary>
+        public event System.Action OnRedoRequested;
+
+        // Before-edit hooks (kept as no-ops; the host snapshots on AssetEdited after the change is applied).
+        private static void RecordMeta(OghamGraphMetadata meta, string label) { }
+        private static void RecordData(OghamData data, string label) { }
+
+        // After-edit hook for authoring data: signal the host to snapshot for undo.
+        private void MarkDirty(OghamData data) => AssetEdited?.Invoke(data);
         private readonly List<CanvasNode>         _nodes   = new();
         private readonly List<CanvasEdge>         _edges   = new();
         private readonly List<CanvasAlias>        _aliases = new();
@@ -272,7 +286,7 @@ namespace Heathen.Ogham.Editor
         public void LoadSyntheticAsset(OghamData data, OghamGraphMetadata meta)
         {
             if (data == null || _assets.Contains(data)) return;
-            if (meta == null) meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
+            if (meta == null) meta = new OghamGraphMetadata();
             _assets.Add(data);
             _metas.Add(meta);
             if (!_assetColors.ContainsKey(data))
@@ -359,7 +373,7 @@ namespace Heathen.Ogham.Editor
             if (i >= 0)
             {
                 _metas[i].HeaderColor = color;
-                EditorUtility.SetDirty(data);
+                MarkDirty(data);
                 SaveMeta(_metas[i]);
             }
             RebuildCanvas();
@@ -376,7 +390,7 @@ namespace Heathen.Ogham.Editor
         {
             int i = _assets.IndexOf(asset);
             if (i < 0) return;
-            Undo.RecordObject(_metas[i], "Add Entry");
+            RecordMeta(_metas[i], "Add Entry");
             var nm = _metas[i].GetOrCreateNode(entry.TagPath);
             nm.Position = new Rect(canvasPos, new Vector2(NodeW, 200f));
             RebuildCanvas();
@@ -424,7 +438,7 @@ namespace Heathen.Ogham.Editor
             if (_nodes.Count == 0) return;
 
             for (int i = 0; i < _metas.Count; i++)
-                Undo.RecordObject(_metas[i], "Auto Layout");
+                RecordMeta(_metas[i], "Auto Layout");
 
             const float colW    = NodeW + 80f;
             const float rowH    = 160f;
@@ -515,7 +529,7 @@ namespace Heathen.Ogham.Editor
             if (assetNodes.Count == 0) return;
 
             int mi = _assets.IndexOf(asset);
-            if (mi >= 0) Undo.RecordObject(_metas[mi], "Auto Layout Import");
+            if (mi >= 0) RecordMeta(_metas[mi], "Auto Layout Import");
 
             float baseY = 20f;
             foreach (var n in _nodes)
@@ -606,31 +620,10 @@ namespace Heathen.Ogham.Editor
         {
             if (data == null) return;
 
-            var dataPath    = AssetDatabase.GetAssetPath(data);
-            var ownMetaPath = Path.ChangeExtension(dataPath, null) + ".graph.asset";
-
-            // Compute the bottom edge of all OTHER assets' graph metadata.
-            float maxY = 20f;
-            foreach (var guid in AssetDatabase.FindAssets("t:OghamGraphMetadata"))
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                if (path == ownMetaPath) continue;
-                var m = AssetDatabase.LoadAssetAtPath<OghamGraphMetadata>(path);
-                if (m == null) continue;
-                foreach (var nm in m.Nodes)
-                    if (nm.Position.yMax > maxY) maxY = nm.Position.yMax;
-            }
-
-            float baseY = maxY > 20f ? maxY + 80f : 20f;
-
-            // Load or create the meta for this asset.
-            var meta = AssetDatabase.LoadAssetAtPath<OghamGraphMetadata>(ownMetaPath);
-            if (meta == null)
-            {
-                meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
-                meta.SourceData = data;
-                AssetDatabase.CreateAsset(meta, ownMetaPath);
-            }
+            // Graph layout now lives in the .ogham JSON (_editor block), not a separate .graph.asset, so this
+            // legacy direct-to-asset layout path is unused. Lay out from a fresh in-memory meta.
+            float baseY = 20f;
+            var meta = new OghamGraphMetadata { SourceData = data };
 
             const float colW    = NodeW + 80f;
             const float rowH    = 160f;
@@ -702,8 +695,7 @@ namespace Heathen.Ogham.Editor
                 baseY += h + 20f;
             }
 
-            EditorUtility.SetDirty(meta);
-            AssetDatabase.SaveAssetIfDirty(meta);
+            // Layout persists via the .ogham JSON on save; no asset to dirty/save.
         }
 
         /// <summary>
@@ -716,7 +708,7 @@ namespace Heathen.Ogham.Editor
             if (sel.Count < 2) return;
 
             var seenMetas = new HashSet<int>();
-            foreach (var n in sel) { int mi = _assets.IndexOf(n.Asset); if (mi >= 0 && seenMetas.Add(mi)) Undo.RecordObject(_metas[mi], "Align Nodes"); }
+            foreach (var n in sel) { int mi = _assets.IndexOf(n.Asset); if (mi >= 0 && seenMetas.Add(mi)) RecordMeta(_metas[mi], "Align Nodes"); }
 
             switch (mode)
             {
@@ -1094,9 +1086,10 @@ namespace Heathen.Ogham.Editor
             if (e == null) return;
             var mp = e.mousePosition;
 
-            if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Z && e.control)
+            if (e.type == EventType.KeyDown && e.control && (e.keyCode == KeyCode.Z || e.keyCode == KeyCode.Y))
             {
-                Undo.PerformUndo();
+                if (e.keyCode == KeyCode.Y || e.shift) OnRedoRequested?.Invoke();
+                else                                    OnUndoRequested?.Invoke();
                 e.Use();
                 _host?.Repaint();
                 return;
@@ -1327,7 +1320,7 @@ namespace Heathen.Ogham.Editor
                         if (Vector2.Distance(mp, ToScreen(edge.Waypoints[wi])) <= wpHitR)
                         {
                             int mi = _assets.IndexOf(edge.Source.Asset);
-                            if (mi >= 0) Undo.RecordObject(_metas[mi], "Move Waypoint");
+                            if (mi >= 0) RecordMeta(_metas[mi], "Move Waypoint");
                             _dragWpEdge = edge; _dragWpIdx = wi; _isDraggingWp = false; _dragWpStartMouse = mp;
                             e.Use(); return;
                         }
@@ -1340,7 +1333,7 @@ namespace Heathen.Ogham.Editor
                         if (IsTabMode(edge) || edge.Target == null) continue;
                         if (!NearWire(edge, mp, 8f)) continue;
                         int mi = _assets.IndexOf(edge.Source.Asset);
-                        if (mi >= 0) Undo.RecordObject(_metas[mi], "Add Waypoint");
+                        if (mi >= 0) RecordMeta(_metas[mi], "Add Waypoint");
                         edge.Waypoints.Insert(BestInsertIdx(edge, mp), ToCanvas(mp));
                         PersistWaypoints(edge);
                         e.Use(); _host?.Repaint(); return;
@@ -1351,7 +1344,7 @@ namespace Heathen.Ogham.Editor
                 {
                     if (!ToScreen(alias.Rect).Contains(mp)) continue;
                     int mi = _assets.IndexOf(alias.OwnerNode.Asset);
-                    if (mi >= 0) Undo.RecordObject(_metas[mi], "Move Alias Pin");
+                    if (mi >= 0) RecordMeta(_metas[mi], "Move Alias Pin");
                     _dragAlias = alias; _dragAliasOffset = ToCanvas(mp) - alias.Rect.position;
                     _dragAliasStartMouse = mp; _isDraggingAlias = false;
                     e.Use(); return;
@@ -1419,7 +1412,7 @@ namespace Heathen.Ogham.Editor
                             foreach (var sn in selectedNodes)
                             {
                                 int mi = _assets.IndexOf(sn.Asset);
-                                if (mi >= 0 && seenMetas.Add(mi)) Undo.RecordObject(_metas[mi], "Move Nodes");
+                                if (mi >= 0 && seenMetas.Add(mi)) RecordMeta(_metas[mi], "Move Nodes");
                             }
                             _isDragMulti         = true;
                             _multiDragMouseStart = mp;
@@ -1430,7 +1423,7 @@ namespace Heathen.Ogham.Editor
                         else
                         {
                             int metaDragIdx = _assets.IndexOf(node.Asset);
-                            if (metaDragIdx >= 0) Undo.RecordObject(_metas[metaDragIdx], "Move Node");
+                            if (metaDragIdx >= 0) RecordMeta(_metas[metaDragIdx], "Move Node");
                             _isDragMulti = false;
                             _multiDragStarts.Clear();
                         }
@@ -2307,7 +2300,7 @@ namespace Heathen.Ogham.Editor
 
         private void AddItem(CanvasNode node, int section)
         {
-            Undo.RecordObject(node.Asset, "Add Item");
+            RecordData(node.Asset, "Add Item");
             switch (section)
             {
                 case 0:
@@ -2342,7 +2335,7 @@ namespace Heathen.Ogham.Editor
                     node.Asset.BuildIndex();
                     break;
             }
-            EditorUtility.SetDirty(node.Asset);
+            MarkDirty(node.Asset);
             RebuildNodeLabelCache(node);
             RefreshNodeHeight(node);
             RebuildEdgesForNode(node);
@@ -2350,7 +2343,7 @@ namespace Heathen.Ogham.Editor
 
         private void RemoveItem(CanvasNode node, int section, int idx)
         {
-            Undo.RecordObject(node.Asset, "Remove Item");
+            RecordData(node.Asset, "Remove Item");
             switch (section)
             {
                 case 0:
@@ -2369,14 +2362,14 @@ namespace Heathen.Ogham.Editor
                     }
                     break;
             }
-            EditorUtility.SetDirty(node.Asset);
+            MarkDirty(node.Asset);
             RefreshNodeHeight(node);
             RebuildEdgesForNode(node);
         }
 
         private void MoveItem(CanvasNode node, int section, int idx, int delta)
         {
-            Undo.RecordObject(node.Asset, "Reorder Item");
+            RecordData(node.Asset, "Reorder Item");
             switch (section)
             {
                 case 0:
@@ -2405,7 +2398,7 @@ namespace Heathen.Ogham.Editor
                     break;
                 }
             }
-            EditorUtility.SetDirty(node.Asset);
+            MarkDirty(node.Asset);
             RebuildEdgesForNode(node);
             _host?.Repaint();
         }
@@ -2446,7 +2439,7 @@ namespace Heathen.Ogham.Editor
             var anchor = new Vector2(screenLeft,
                 GUIUtility.GUIToScreenPoint(Event.current.mousePosition).y);
 
-            System.Action onRefresh = () => { RefreshNodeHeight(node); _host?.Repaint(); };
+            System.Action onRefresh = () => { RefreshNodeHeight(node); MarkDirty(node.Asset); _host?.Repaint(); };
 
             switch (section)
             {
@@ -2482,8 +2475,8 @@ namespace Heathen.Ogham.Editor
             if (string.IsNullOrEmpty(basePath)) return;
 
             int mi = _assets.IndexOf(asset);
-            Undo.RecordObject(asset, "Cascade");
-            if (mi >= 0) Undo.RecordObject(_metas[mi], "Cascade");
+            RecordData(asset, "Cascade");
+            if (mi >= 0) RecordMeta(_metas[mi], "Cascade");
 
             // Save operations — Seq1 gets them; all later Seqs (including renamed original) have none.
             var savedOps = new List<GameplayTagOperation>(original.EntryOperations);
@@ -2535,7 +2528,7 @@ namespace Heathen.Ogham.Editor
             }
 
             asset.BuildIndex();
-            EditorUtility.SetDirty(asset);
+            // data persists via the .ogham JSON on save.
             RebuildCanvas();
             AutoLayoutAsset(asset);
             OnGraphChanged?.Invoke();
@@ -2555,13 +2548,13 @@ namespace Heathen.Ogham.Editor
                 var trimmed = newPath.Trim();
                 if (trimmed == current) return;
                 int renameMetaIdx = _assets.IndexOf(node.Asset);
-                Undo.RecordObject(node.Asset, "Rename Entry");
-                if (renameMetaIdx >= 0) Undo.RecordObject(_metas[renameMetaIdx], "Rename Entry");
+                RecordData(node.Asset, "Rename Entry");
+                if (renameMetaIdx >= 0) RecordMeta(_metas[renameMetaIdx], "Rename Entry");
                 node.Entry.TagPath = trimmed;
                 OghamTagHelper.EnsureRegistered(trimmed);
                 PropagateTagRename(current, trimmed);
                 node.Asset.BuildIndex();
-                EditorUtility.SetDirty(node.Asset);
+                MarkDirty(node.Asset);
                 node.DisplayName      = trimmed;
                 node.Meta.TagName     = trimmed;
                 if (renameMetaIdx >= 0) { _metas[renameMetaIdx].PruneOrphans(); SaveMeta(_metas[renameMetaIdx]); }
@@ -2574,19 +2567,19 @@ namespace Heathen.Ogham.Editor
 
         private void DeleteNode(CanvasNode node)
         {
-            Undo.RecordObject(node.Asset, "Delete Node");
+            RecordData(node.Asset, "Delete Node");
             int delMetaIdx = _assets.IndexOf(node.Asset);
-            if (delMetaIdx >= 0) Undo.RecordObject(_metas[delMetaIdx], "Delete Node");
+            if (delMetaIdx >= 0) RecordMeta(_metas[delMetaIdx], "Delete Node");
             foreach (var edge in _edges.Where(e => e.Target == node))
             {
                 if (edge.Source.Asset != node.Asset)
-                    Undo.RecordObject(edge.Source.Asset, "Delete Node");
+                    RecordData(edge.Source.Asset, "Delete Node");
                 edge.Option.TargetEntryPath = "";
-                EditorUtility.SetDirty(edge.Source.Asset);
+                MarkDirty(edge.Source.Asset);
             }
             node.Asset.Entries.Remove(node.Entry);
             node.Asset.BuildIndex();
-            EditorUtility.SetDirty(node.Asset);
+            MarkDirty(node.Asset);
             if (delMetaIdx >= 0) { _metas[delMetaIdx].RemoveNode(node.Entry.TagPath); SaveMeta(_metas[delMetaIdx]); }
             RebuildCanvas();
             OnGraphChanged?.Invoke();
@@ -2614,7 +2607,7 @@ namespace Heathen.Ogham.Editor
             }
 
             int mi = _assets.IndexOf(node.Asset);
-            Undo.RecordObject(node.Asset, toFork ? "Convert to Fork" : "Convert to Content");
+            RecordData(node.Asset, toFork ? "Convert to Fork" : "Convert to Content");
 
             if (toFork)
             {
@@ -2628,7 +2621,7 @@ namespace Heathen.Ogham.Editor
                 node.Asset.BuildIndex();
             }
 
-            EditorUtility.SetDirty(node.Asset);
+            MarkDirty(node.Asset);
             if (mi >= 0) SaveMeta(_metas[mi]);
             RefreshNodeHeight(node);
             RebuildEdgesForNode(node);
@@ -2648,10 +2641,10 @@ namespace Heathen.Ogham.Editor
                     foreach (var opt in entry.Options)
                         if (opt.TargetEntryPath == oldPath)
                         {
-                            if (!dirty) { Undo.RecordObject(asset, "Rename Entry"); dirty = true; }
+                            if (!dirty) { RecordData(asset, "Rename Entry"); dirty = true; }
                             opt.TargetEntryPath = newPath;
                         }
-                if (dirty) { asset.BuildIndex(); EditorUtility.SetDirty(asset); }
+                if (dirty) { asset.BuildIndex(); MarkDirty(asset); }
             }
             for (int i = 0; i < _metas.Count; i++)
             {
@@ -2660,7 +2653,7 @@ namespace Heathen.Ogham.Editor
                     foreach (var alias in nm.AliasPins)
                         if (alias.TargetEntryTagName == oldPath)
                         {
-                            if (!dirty) { Undo.RecordObject(_metas[i], "Rename Entry"); dirty = true; }
+                            if (!dirty) { RecordMeta(_metas[i], "Rename Entry"); dirty = true; }
                             alias.TargetEntryTagName = newPath;
                         }
                 if (dirty) SaveMeta(_metas[i]);
@@ -2684,7 +2677,7 @@ namespace Heathen.Ogham.Editor
                     wpMenu.AddItem(new GUIContent("Remove Waypoint"), false, () =>
                     {
                         int mi = _assets.IndexOf(capEdge.Source.Asset);
-                        if (mi >= 0) Undo.RecordObject(_metas[mi], "Remove Waypoint");
+                        if (mi >= 0) RecordMeta(_metas[mi], "Remove Waypoint");
                         capEdge.Waypoints.RemoveAt(capWi);
                         PersistWaypoints(capEdge);
                         _host?.Repaint();
@@ -2707,7 +2700,7 @@ namespace Heathen.Ogham.Editor
                     {
                         if (string.IsNullOrWhiteSpace(newName)) return;
                         int mi = _assets.IndexOf(capAlias.OwnerNode.Asset);
-                        if (mi >= 0) Undo.RecordObject(_metas[mi], "Rename Alias Pin");
+                        if (mi >= 0) RecordMeta(_metas[mi], "Rename Alias Pin");
                         capAlias.Meta.Name = newName.Trim();
                         if (mi >= 0) SaveMeta(_metas[mi]);
                         _host?.Repaint();
@@ -2716,7 +2709,7 @@ namespace Heathen.Ogham.Editor
                 aMenu.AddItem(new GUIContent("Remove Alias Pin"), false, () =>
                 {
                     int mi = _assets.IndexOf(capAlias.OwnerNode.Asset);
-                    if (mi >= 0) Undo.RecordObject(_metas[mi], "Remove Alias Pin");
+                    if (mi >= 0) RecordMeta(_metas[mi], "Remove Alias Pin");
                     capAlias.OwnerNode.Meta.AliasPins.Remove(capAlias.Meta);
                     if (mi >= 0) SaveMeta(_metas[mi]);
                     RebuildCanvas();
@@ -2762,7 +2755,7 @@ namespace Heathen.Ogham.Editor
                         int captMetaIdx = _assets.IndexOf(captAsset);
                         menu.AddItem(new GUIContent(label), isTab, () =>
                         {
-                            if (captMetaIdx >= 0) Undo.RecordObject(_metas[captMetaIdx], "Toggle Tab Flag");
+                            if (captMetaIdx >= 0) RecordMeta(_metas[captMetaIdx], "Toggle Tab Flag");
                             if (captMeta.TabFlagOptions.Contains(captOpt.TagPath))
                                 captMeta.TabFlagOptions.Remove(captOpt.TagPath);
                             else
@@ -2792,7 +2785,7 @@ namespace Heathen.Ogham.Editor
                     var capCol = hlCol;
                     menu.AddItem(new GUIContent(hlLabel), node.Meta.HighlightColor == hlCol, () =>
                     {
-                        if (hlMi >= 0) Undo.RecordObject(_metas[hlMi], "Set Highlight Color");
+                        if (hlMi >= 0) RecordMeta(_metas[hlMi], "Set Highlight Color");
                         hlMeta.HighlightColor = capCol;
                         if (hlMi >= 0) SaveMeta(_metas[hlMi]);
                         _host?.Repaint();
@@ -2845,7 +2838,7 @@ namespace Heathen.Ogham.Editor
                 {
                     OghamNotesWindow.Open(cap.Meta.DirectorNotes, newNotes =>
                     {
-                        if (notesMi >= 0) Undo.RecordObject(_metas[notesMi], "Edit Director Notes");
+                        if (notesMi >= 0) RecordMeta(_metas[notesMi], "Edit Director Notes");
                         cap.Meta.DirectorNotes = newNotes ?? "";
                         if (notesMi >= 0) SaveMeta(_metas[notesMi]);
                         _host?.Repaint();
@@ -2868,7 +2861,7 @@ namespace Heathen.Ogham.Editor
                     foreach (var asset in _assets)
                     {
                         var a = asset; var p = cp;
-                        menu.AddItem(new GUIContent($"Add Entry → '{a.name}'"), false,
+                        menu.AddItem(new GUIContent($"Add Entry → '{a.Name}'"), false,
                             () => CreateEntry(a, p));
                     }
                     if (_assets.Count == 0)
@@ -2895,7 +2888,7 @@ namespace Heathen.Ogham.Editor
                         foreach (var m in _metas)
                         {
                             var capMeta = m;
-                            menu.AddItem(new GUIContent($"Manage Labels/{capMeta.name}…"), false, () =>
+                            menu.AddItem(new GUIContent($"Manage Labels/{capMeta.Name}…"), false, () =>
                                 OghamLabelPickerPopup.OpenOverviewMode(capMeta, () =>
                                 {
                                     SaveMeta(capMeta);
@@ -2920,18 +2913,18 @@ namespace Heathen.Ogham.Editor
             var aliasTarget = _aliases.LastOrDefault(a => a.Rect.Contains(cp));
             if (aliasTarget != null && !string.IsNullOrEmpty(aliasTarget.Meta.TargetEntryTagName))
             {
-                Undo.RecordObject(_connSrcNode.Asset, "Connect via Alias");
+                RecordData(_connSrcNode.Asset, "Connect via Alias");
                 _connSrcOpt.TargetEntryPath = aliasTarget.Meta.TargetEntryTagName;
-                EditorUtility.SetDirty(_connSrcNode.Asset);
+                MarkDirty(_connSrcNode.Asset);
                 RebuildCanvas();
                 return;
             }
 
             if (target != null && target != _connSrcNode)
             {
-                Undo.RecordObject(_connSrcNode.Asset, "Connect");
+                RecordData(_connSrcNode.Asset, "Connect");
                 _connSrcOpt.TargetEntryPath = target.Entry.TagPath;
-                EditorUtility.SetDirty(_connSrcNode.Asset);
+                MarkDirty(_connSrcNode.Asset);
                 RebuildCanvas();
             }
             else if (target == null)
@@ -2946,15 +2939,15 @@ namespace Heathen.Ogham.Editor
                     if (string.IsNullOrWhiteSpace(newPath)) return;
                     var t     = newPath.Trim();
                     int connMetaIdx = _assets.IndexOf(srcNode.Asset);
-                    Undo.RecordObject(srcNode.Asset, "Add Entry");
-                    if (connMetaIdx >= 0) Undo.RecordObject(_metas[connMetaIdx], "Add Entry");
+                    RecordData(srcNode.Asset, "Add Entry");
+                    if (connMetaIdx >= 0) RecordMeta(_metas[connMetaIdx], "Add Entry");
                     var entry = new DialogueEntry();
                     entry.TagPath = t;
                     OghamTagHelper.EnsureRegistered(t);
                     srcNode.Asset.Entries.Add(entry);
                     srcNode.Asset.BuildIndex();
                     srcOpt.TargetEntryPath = t;
-                    EditorUtility.SetDirty(srcNode.Asset);
+                    MarkDirty(srcNode.Asset);
                     if (connMetaIdx >= 0)
                     {
                         var nm = _metas[connMetaIdx].GetOrCreateNode(t);
@@ -2997,12 +2990,12 @@ namespace Heathen.Ogham.Editor
         public void CreateEntry(OghamData asset, Vector2 canvasPos)
         {
             int mi = _assets.IndexOf(asset);
-            Undo.RecordObject(asset, "Add Entry");
-            if (mi >= 0) Undo.RecordObject(_metas[mi], "Add Entry");
+            RecordData(asset, "Add Entry");
+            if (mi >= 0) RecordMeta(_metas[mi], "Add Entry");
             var entry = new DialogueEntry();
             asset.Entries.Add(entry);
             asset.BuildIndex();
-            EditorUtility.SetDirty(asset);
+            // data persists via the .ogham JSON on save.
             if (mi >= 0)
             {
                 var nm = _metas[mi].GetOrCreateNode(entry.TagPath);
@@ -3166,21 +3159,15 @@ namespace Heathen.Ogham.Editor
 
         private static OghamGraphMetadata LoadOrCreateMeta(OghamData data)
         {
-            var dataPath = AssetDatabase.GetAssetPath(data);
-            var metaPath = Path.ChangeExtension(dataPath, null) + ".graph.asset";
-            var existing = AssetDatabase.LoadAssetAtPath<OghamGraphMetadata>(metaPath);
-            if (existing != null) return existing;
-            var meta = ScriptableObject.CreateInstance<OghamGraphMetadata>();
-            meta.SourceData = data;
-            AssetDatabase.CreateAsset(meta, metaPath);
-            AssetDatabase.SaveAssets();
-            return meta;
+            // Graph layout lives in the .ogham JSON (_editor block), not a separate .graph.asset.
+            return new OghamGraphMetadata { SourceData = data };
         }
 
-        private static void SaveMeta(OghamGraphMetadata meta)
+        private void SaveMeta(OghamGraphMetadata meta)
         {
-            EditorUtility.SetDirty(meta);
-            AssetDatabase.SaveAssetIfDirty(meta);
+            // After-edit hook for layout: signal the host to snapshot for undo (layout persists via JSON).
+            int i = _metas.IndexOf(meta);
+            if (i >= 0 && i < _assets.Count) AssetEdited?.Invoke(_assets[i]);
         }
 
         private void SaveViewTransform()
@@ -3214,7 +3201,7 @@ namespace Heathen.Ogham.Editor
             {
                 if (string.IsNullOrEmpty(targetTag)) return;
                 int mi = _assets.IndexOf(node.Asset);
-                if (mi >= 0) Undo.RecordObject(_metas[mi], "Add Alias Pin");
+                if (mi >= 0) RecordMeta(_metas[mi], "Add Alias Pin");
                 var dot       = targetTag.LastIndexOf('.');
                 var shortName = dot >= 0 ? targetTag.Substring(dot + 1) : targetTag;
                 node.Meta.AliasPins.Add(new OghamAliasMeta {

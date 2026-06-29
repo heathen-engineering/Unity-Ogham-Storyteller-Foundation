@@ -3,7 +3,8 @@
     "rootNamespace": "",
     "references": [
         "Heathen.GameplayTags",
-        "Heathen.Lexicon"
+        "Heathen.Lexicon",
+        "Heathen.GameFramework"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

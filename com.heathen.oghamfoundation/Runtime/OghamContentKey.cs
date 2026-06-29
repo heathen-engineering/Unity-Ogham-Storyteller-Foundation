@@ -26,6 +26,17 @@ namespace Heathen.Ogham
         public string            KeyOrValue = string.Empty;
         /// <summary>The direct asset reference used when <see cref="Mode"/> is <see cref="LexiconLocMode.Literal"/> and <see cref="Type"/> is not Text.</summary>
         public UnityEngine.Object AssetRef;
+        /// <summary>
+        /// The GUID of the referenced asset for non-Text literal content. The portable, build-safe carrier for
+        /// the asset reference: the editor resolves it through <c>AssetDatabase</c> into <see cref="AssetRef"/>,
+        /// while a build resolves it by GUID through the Addressables asset seam. Empty for text content.
+        /// </summary>
+        public string AssetGuid = string.Empty;
+        /// <summary>
+        /// For sprite content, the name of the sub-asset within the GUID-identified asset, so sprite sheets
+        /// resolve to the correct sprite. Empty for non-sprite content.
+        /// </summary>
+        public string AssetName = string.Empty;
 
         /// <summary>Returns <c>true</c> when this slot carries text content.</summary>
         public bool IsText   => Type == OghamContentType.Text;
@@ -61,7 +72,12 @@ namespace Heathen.Ogham
             if (Type == OghamContentType.Text) return null;
             if (Mode == LexiconLocMode.Localised)
                 return LexiconRegistry.ResolveAsset(GetHash()) ?? AssetRef;
-            return AssetRef;
+            // Literal asset content. A live AssetRef exists only in the editor (set by AssetDatabase); baked
+            // runtime content carries only the GUID, so resolve it through the Addressables asset seam.
+            if (AssetRef != null) return AssetRef;
+            if (!string.IsNullOrEmpty(AssetGuid))
+                return LexiconRegistry.ResolveAssetByGuid(AssetGuid, AssetName);
+            return null;
         }
 
         /// <summary>

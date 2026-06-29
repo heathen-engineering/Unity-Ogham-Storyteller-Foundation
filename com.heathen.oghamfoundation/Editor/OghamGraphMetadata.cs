@@ -84,15 +84,16 @@ namespace Heathen.Ogham.Editor
     }
 
     /// <summary>
-    /// Editor-only companion asset that stores graph layout, view state, and annotation data for a single
-    /// <see cref="OghamData"/> asset. Kept separate from the data asset so layout information is not
-    /// included in player builds.
+    /// Editor-only graph layout, view state, and annotation data for a single <see cref="OghamData"/>. A plain
+    /// class (no longer a ScriptableObject): it is built in-memory from the <c>.ogham</c> <c>_editor</c> block
+    /// and written back via <see cref="OghamJsonDocument.SyncFrom"/>; it is never an asset and never in builds.
     /// </summary>
-    [UnityEngine.CreateAssetMenu(menuName = "Ogham/Graph Metadata", fileName = "OghamGraphMetadata")]
-    public class OghamGraphMetadata : UnityEngine.ScriptableObject
+    public class OghamGraphMetadata
     {
-        /// <summary>The <see cref="OghamData"/> asset this metadata accompanies.</summary>
+        /// <summary>The <see cref="OghamData"/> this metadata accompanies.</summary>
         public OghamData SourceData;
+        /// <summary>Display name; set by the editor on load.</summary>
+        public string Name = string.Empty;
         /// <summary>Per-node layout and annotation data, keyed by tag path.</summary>
         public List<OghamNodeMeta> Nodes = new();
         /// <summary>Canvas view state: x/y = scroll offset, z = zoom scale.</summary>

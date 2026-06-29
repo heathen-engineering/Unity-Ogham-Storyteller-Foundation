@@ -2,6 +2,8 @@
     "name": "Heathen.Ogham.Editor",
     "rootNamespace": "",
     "references": [
+        "Heathen.GameFramework",
+        "Heathen.GameFramework.Editor",
         "Heathen.GameplayTags",
         "Heathen.GameplayTags.Editor",
         "Heathen.Lexicon",

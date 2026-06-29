@@ -1,353 +1,173 @@
 using System;
 using System.Collections.Generic;
+using Heathen;
 using Heathen.GameplayTags;
-using Heathen.Lexicon;
 using UnityEngine;
 
 namespace Heathen.Ogham
 {
     /// <summary>
-    /// Primary static entry point for the Ogham Storyteller system. Manages named <see cref="OghamStory"/>
-    /// instances and forwards their events as static events for global listeners. Provides single-story overloads
-    /// for the main story and explicit-ID overloads for multi-story setups.
-    /// Use <see cref="StorytellerRegistry"/> to create and register stories from the Unity Inspector.
+    /// Static convenience facade for the single-world case: routes every call to the main world's
+    /// <see cref="StorytellerSubsystem"/> (<c>GameFramework.MainWorld</c>). Existing code that used the old
+    /// static <c>Storyteller</c> keeps working unchanged. Multi-world games (a pause world, per-player
+    /// worlds) should resolve the per-world instance directly via <c>world.Get&lt;StorytellerSubsystem&gt;()</c>.
+    ///
+    /// <para>Events and calls target whatever is the main world at the time; subscribe after framework boot
+    /// (e.g. in <c>Awake</c>/<c>OnEnable</c>), by which point the main world and its subsystem exist.</para>
     /// </summary>
     public static class Storyteller
     {
-        private static readonly Dictionary<ulong, OghamStory>      _stories    = new();
-        private static readonly Dictionary<ulong, IStoryProcessor> _processors = new();
-        private static OghamStory _mainStory;
+        private static StorytellerSubsystem Main => GameFramework.MainWorld?.Get<StorytellerSubsystem>();
 
         private static readonly IReadOnlyList<StoryOption>  _emptyOptions = Array.Empty<StoryOption>();
         private static readonly IReadOnlyList<HistoryEntry> _emptyHistory = Array.Empty<HistoryEntry>();
 
-        // Static state survives "Enter Play Mode without Domain Reload"; clear it on every play session
-        // so stale stories, processors, and dangling event subscriptions never carry over.
+        // Narrative variables are global for now (a candidate for per-world in a later slice); reset them
+        // once per play session. Per-story/per-world registry state now lives on the subsystem instances,
+        // which are recreated fresh each session, so they need no manual reset here.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        private static void ResetStatics()
+        private static void ResetGlobals() => OghamVariables.ResetToDefaults();
+
+        /// <inheritdoc cref="StorytellerSubsystem.OnEntered"/>
+        public static event Action<GameplayTag, StoryNode> OnEntered
         {
-            _stories.Clear();
-            _processors.Clear();
-            _mainStory = null;
-            OnEntered  = null;
-            OnChoice   = null;
-            OnClosed   = null;
-            OghamVariables.ResetToDefaults();
+            add    { var s = Main; if (s != null) s.OnEntered += value; }
+            remove { var s = Main; if (s != null) s.OnEntered -= value; }
         }
 
-        /// <summary>
-        /// Raised when any registered story enters a dialogue node. The first parameter identifies which story fired.
-        /// </summary>
-        public static event Action<GameplayTag, StoryNode>   OnEntered;
-
-        /// <summary>
-        /// Raised when an option is selected in any registered story, before navigation to the next node.
-        /// The first parameter identifies the story.
-        /// </summary>
-        public static event Action<GameplayTag, StoryOption> OnChoice;
-
-        /// <summary>
-        /// Raised when any registered story's conversation ends. The first parameter identifies which story fired.
-        /// </summary>
-        public static event Action<GameplayTag>              OnClosed;
-
-        /// <summary>
-        /// Creates a new <see cref="OghamStory"/>, registers it, and optionally sets it as the main story.
-        /// Returns the existing instance when a story with the same ID is already registered.
-        /// Inline localisations from <paramref name="compiled"/> are injected before the story is created.
-        /// </summary>
-        /// <param name="storyId">The GameplayTag that uniquely identifies the story.</param>
-        /// <param name="compiled">Optional compiled story asset; takes priority as the primary data source.</param>
-        /// <param name="additionalData">Optional additional authoring data assets to merge with the compiled story.</param>
-        /// <param name="setAsMain">When <c>true</c>, sets this story as the main story.</param>
-        /// <returns>The newly created or existing <see cref="OghamStory"/>.</returns>
-        public static OghamStory RegisterStory(GameplayTag storyId,
-                                               OghamCompiledData compiled = null,
-                                               IEnumerable<OghamData> additionalData = null,
-                                               bool setAsMain = false)
+        /// <inheritdoc cref="StorytellerSubsystem.OnChoice"/>
+        public static event Action<GameplayTag, StoryOption> OnChoice
         {
-            if (_stories.TryGetValue(storyId.Id, out var existing))
-            {
-                if (setAsMain) _mainStory = existing;
-                return existing;
-            }
-
-            // Inject inline localisations before building story nodes so content resolves correctly.
-            if (compiled?.Localisations != null)
-                foreach (var loc in compiled.Localisations)
-                    if (!string.IsNullOrWhiteSpace(loc.Key))
-                        LexiconRegistry.SetString(loc.Key, loc.Value,
-                            string.IsNullOrWhiteSpace(loc.Culture) ? null : loc.Culture);
-
-            var story = new OghamStory(storyId);
-            if (compiled != null) story.RegisterData(compiled);
-            if (additionalData != null)
-                foreach (var d in additionalData)
-                    story.RegisterData(d);
-
-            return AddStory(story, setAsMain);
+            add    { var s = Main; if (s != null) s.OnChoice += value; }
+            remove { var s = Main; if (s != null) s.OnChoice -= value; }
         }
 
-        /// <summary>
-        /// Registers a pre-created <see cref="OghamStory"/> and subscribes it to the global event forwarding system.
-        /// Has no effect when a story with the same ID is already registered.
-        /// </summary>
-        /// <param name="story">The story to register. <c>null</c> is silently ignored.</param>
-        /// <param name="setAsMain">When <c>true</c>, sets this story as the main story.</param>
-        public static void RegisterStory(OghamStory story, bool setAsMain = false)
+        /// <inheritdoc cref="StorytellerSubsystem.OnClosed"/>
+        public static event Action<GameplayTag> OnClosed
         {
-            if (story == null || _stories.ContainsKey(story.Id.Id)) return;
-            AddStory(story, setAsMain);
+            add    { var s = Main; if (s != null) s.OnClosed += value; }
+            remove { var s = Main; if (s != null) s.OnClosed -= value; }
         }
 
-        /// <summary>
-        /// Unregisters the story with the given ID and releases its event subscriptions.
-        /// The <see cref="OghamStory"/> instance is not destroyed and can still be used directly.
-        /// Use this when content such as a mod is unloaded and the story should be freed.
-        /// </summary>
-        /// <param name="storyId">The GameplayTag identifying the story to unregister.</param>
-        public static void UnregisterStory(GameplayTag storyId)
-        {
-            if (!_stories.TryGetValue(storyId.Id, out var story)) return;
-            story.OnEntered -= ForwardEntered;
-            story.OnChoice  -= ForwardChoice;
-            story.OnClosed  -= ForwardClosed;
-            _stories.Remove(storyId.Id);
-            _processors.Remove(storyId.Id);
+        // ── Registration ──────────────────────────────────────────────────────
 
-            if (_mainStory == story)
-            {
-                _mainStory = null;
-                foreach (var s in _stories.Values) { _mainStory = s; break; }
-            }
-        }
+        /// <inheritdoc cref="StorytellerSubsystem.OpenSession(OghamStory, bool)"/>
+        public static OghamSession OpenSession(OghamStory definition, bool setAsMain = false) =>
+            Main?.OpenSession(definition, setAsMain);
 
-        /// <summary>
-        /// Returns the registered <see cref="OghamStory"/> with the given ID, or <c>null</c> if not registered.
-        /// </summary>
-        /// <param name="storyId">The GameplayTag identifying the story.</param>
-        /// <returns>The registered story, or <c>null</c>.</returns>
-        public static OghamStory GetStory(GameplayTag storyId) =>
-            _stories.TryGetValue(storyId.Id, out var story) ? story : null;
+        /// <inheritdoc cref="StorytellerSubsystem.OpenSession(GameplayTag, bool)"/>
+        public static OghamSession OpenSession(GameplayTag storyTag, bool setAsMain = false) =>
+            Main?.OpenSession(storyTag, setAsMain);
 
-        /// <summary>Returns <c>true</c> when a story with the given ID is registered.</summary>
-        /// <param name="storyId">The GameplayTag identifying the story.</param>
-        /// <returns><c>true</c> if the story is registered; otherwise <c>false</c>.</returns>
-        public static bool HasStory(GameplayTag storyId) =>
-            _stories.ContainsKey(storyId.Id);
+        /// <inheritdoc cref="StorytellerSubsystem.RegisterSession"/>
+        public static void RegisterSession(OghamSession session, bool setAsMain = false) =>
+            Main?.RegisterSession(session, setAsMain);
 
-        /// <summary>
-        /// Sets the registered story with the given ID as the main story. Has no effect when the story is not registered.
-        /// </summary>
-        /// <param name="storyId">The GameplayTag of the story to promote to main.</param>
-        public static void SetMain(GameplayTag storyId)
-        {
-            if (_stories.TryGetValue(storyId.Id, out var story))
-                _mainStory = story;
-        }
+        /// <inheritdoc cref="StorytellerSubsystem.RegisterStory(OghamStory, bool)"/>
+        public static void RegisterStory(OghamStory definition, bool setAsMain = false) =>
+            Main?.RegisterStory(definition, setAsMain);
 
-        /// <summary>The tag ID of the current main story, or <c>default(GameplayTag)</c> when no story is registered.</summary>
-        public static GameplayTag MainStoryId => _mainStory?.Id ?? default;
+        /// <inheritdoc cref="StorytellerSubsystem.UnregisterStory"/>
+        public static void UnregisterStory(GameplayTag storyId) => Main?.UnregisterStory(storyId);
+
+        /// <inheritdoc cref="StorytellerSubsystem.GetStory"/>
+        public static OghamSession GetStory(GameplayTag storyId) => Main?.GetStory(storyId);
+
+        /// <inheritdoc cref="StorytellerSubsystem.HasStory"/>
+        public static bool HasStory(GameplayTag storyId) => Main?.HasStory(storyId) ?? false;
+
+        /// <inheritdoc cref="StorytellerSubsystem.SetMain"/>
+        public static void SetMain(GameplayTag storyId) => Main?.SetMain(storyId);
+
+        /// <inheritdoc cref="StorytellerSubsystem.MainStoryId"/>
+        public static GameplayTag MainStoryId => Main?.MainStoryId ?? default;
 
         // ── Processor ownership ───────────────────────────────────────────────
 
-        /// <summary>
-        /// Registers <paramref name="processor"/> as the single active presenter for the story identified by
-        /// <paramref name="storyId"/>. If another processor already holds the story it is superseded
-        /// (notified via <see cref="IStoryProcessor.OnSuperseded"/>) and replaced. The story and its state
-        /// remain owned by the Storyteller and are unaffected by the hand-over.
-        /// </summary>
-        /// <param name="storyId">The story to acquire presentation rights for.</param>
-        /// <param name="processor">The processor taking over presentation. <c>null</c> is ignored.</param>
-        public static void AcquireStory(GameplayTag storyId, IStoryProcessor processor)
-        {
-            if (processor == null) return;
-            if (_processors.TryGetValue(storyId.Id, out var prev) && prev != null && !ReferenceEquals(prev, processor))
-                prev.OnSuperseded(storyId);
-            _processors[storyId.Id] = processor;
-        }
+        /// <inheritdoc cref="StorytellerSubsystem.AcquireStory"/>
+        public static void AcquireStory(GameplayTag storyId, IStoryProcessor processor) =>
+            Main?.AcquireStory(storyId, processor);
 
-        /// <summary>
-        /// Releases presentation rights for <paramref name="storyId"/> held by <paramref name="processor"/>,
-        /// but only when it is still the active presenter. A no-op if another processor has since taken over.
-        /// Does not unregister the story — use <see cref="UnregisterStory"/> for that.
-        /// </summary>
-        /// <param name="storyId">The story to release.</param>
-        /// <param name="processor">The processor relinquishing presentation.</param>
-        public static void ReleaseStory(GameplayTag storyId, IStoryProcessor processor)
-        {
-            if (_processors.TryGetValue(storyId.Id, out var cur) && ReferenceEquals(cur, processor))
-                _processors.Remove(storyId.Id);
-        }
+        /// <inheritdoc cref="StorytellerSubsystem.ReleaseStory"/>
+        public static void ReleaseStory(GameplayTag storyId, IStoryProcessor processor) =>
+            Main?.ReleaseStory(storyId, processor);
 
-        /// <summary>
-        /// Returns <c>true</c> when <paramref name="processor"/> is the active presenter for the given story.
-        /// </summary>
-        /// <param name="storyId">The story to test.</param>
-        /// <param name="processor">The processor to check.</param>
+        /// <inheritdoc cref="StorytellerSubsystem.IsProcessor"/>
         public static bool IsProcessor(GameplayTag storyId, IStoryProcessor processor) =>
-            _processors.TryGetValue(storyId.Id, out var cur) && ReferenceEquals(cur, processor);
+            Main?.IsProcessor(storyId, processor) ?? false;
 
-        /// <summary>Starts a conversation at the given node in the main story. Returns <c>false</c> when the entry is not found.</summary>
-        /// <param name="nodeTag">The tag of the dialogue entry to enter.</param>
-        /// <returns><c>true</c> on success; <c>false</c> when no main story is set or the entry is not found.</returns>
-        public static bool Enter(GameplayTag nodeTag)          => _mainStory?.Enter(nodeTag)     ?? false;
-        /// <summary>Selects an option in the main story. Returns <c>false</c> when the option is not available.</summary>
-        /// <param name="optionTag">The tag of the option to select.</param>
-        /// <returns><c>true</c> on success; <c>false</c> when no main story is set or the option is not found.</returns>
-        public static bool Choose(GameplayTag optionTag)       => _mainStory?.Choose(optionTag)  ?? false;
-        /// <summary>Closes the main story's active conversation, if any.</summary>
-        public static void Close()                             => _mainStory?.Close();
-        /// <summary>
-        /// Re-surfaces the main story's current node after a <see cref="Restore(OghamSaveState)"/> without
-        /// re-running its On-Enter operations. Returns <c>false</c> when there is nothing to resume.
-        /// </summary>
-        public static bool Resume()                            => _mainStory?.Resume()          ?? false;
+        // ── Main-story conversation ───────────────────────────────────────────
 
-        /// <summary>Starts a conversation at the given node in the specified story.</summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        /// <param name="nodeTag">The tag of the dialogue entry to enter.</param>
-        /// <returns><c>true</c> on success; <c>false</c> when the story or entry is not found.</returns>
-        public static bool Enter(GameplayTag storyId, GameplayTag nodeTag)         => GetStory(storyId)?.Enter(nodeTag)    ?? false;
-        /// <summary>Selects an option in the specified story.</summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        /// <param name="optionTag">The tag of the option to select.</param>
-        /// <returns><c>true</c> on success; <c>false</c> when the story or option is not found.</returns>
-        public static bool Choose(GameplayTag storyId, GameplayTag optionTag)      => GetStory(storyId)?.Choose(optionTag) ?? false;
-        /// <summary>Closes the active conversation in the specified story, if any.</summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        public static void Close(GameplayTag storyId)                              => GetStory(storyId)?.Close();
-        /// <summary>Re-surfaces the specified story's current node after a restore, without re-running On-Enter operations.</summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        public static bool Resume(GameplayTag storyId)                             => GetStory(storyId)?.Resume()    ?? false;
+        /// <inheritdoc cref="StorytellerSubsystem.Enter(GameplayTag)"/>
+        public static bool Enter(GameplayTag nodeTag)    => Main?.Enter(nodeTag)    ?? false;
+        /// <inheritdoc cref="StorytellerSubsystem.Choose(GameplayTag)"/>
+        public static bool Choose(GameplayTag optionTag) => Main?.Choose(optionTag) ?? false;
+        /// <inheritdoc cref="StorytellerSubsystem.Close()"/>
+        public static void Close()                       => Main?.Close();
+        /// <inheritdoc cref="StorytellerSubsystem.Resume()"/>
+        public static bool Resume()                      => Main?.Resume()          ?? false;
 
-        /// <summary>Returns <c>true</c> when the main story has an active conversation.</summary>
-        public static bool                        IsActive   => _mainStory?.IsActive          ?? false;
-        /// <summary>The current <see cref="StoryNode"/> for the main story, or <c>null</c> when no conversation is active.</summary>
-        public static StoryNode                   Data       => _mainStory?.CurrentNode;
-        /// <summary>Active (condition-passing) options for the current node of the main story.</summary>
-        public static IReadOnlyList<StoryOption>  Options    => _mainStory?.CurrentOptions    ?? _emptyOptions;
-        /// <summary>All options for the current node of the main story, including gated ones. Use with <see cref="OghamLinkFormatter"/> to style inline links.</summary>
-        public static IReadOnlyList<StoryOption>  AllOptions => _mainStory?.CurrentAllOptions ?? _emptyOptions;
-        /// <summary>The conversation history for the main story.</summary>
-        public static IReadOnlyList<HistoryEntry> History    => _mainStory?.History           ?? _emptyHistory;
+        /// <inheritdoc cref="StorytellerSubsystem.Enter(GameplayTag, GameplayTag)"/>
+        public static bool Enter(GameplayTag storyId, GameplayTag nodeTag)    => Main?.Enter(storyId, nodeTag)    ?? false;
+        /// <inheritdoc cref="StorytellerSubsystem.Choose(GameplayTag, GameplayTag)"/>
+        public static bool Choose(GameplayTag storyId, GameplayTag optionTag) => Main?.Choose(storyId, optionTag) ?? false;
+        /// <inheritdoc cref="StorytellerSubsystem.Close(GameplayTag)"/>
+        public static void Close(GameplayTag storyId)                         => Main?.Close(storyId);
+        /// <inheritdoc cref="StorytellerSubsystem.Resume(GameplayTag)"/>
+        public static bool Resume(GameplayTag storyId)                        => Main?.Resume(storyId) ?? false;
 
-        /// <summary>
-        /// Returns a new <see cref="GameplayTagCollection"/> containing only narrative-state tags at or beneath
-        /// the given path in the main story.
-        /// </summary>
-        /// <param name="tag">The root tag whose subtree of state values is returned.</param>
-        /// <returns>A new collection with the matching state tags and their values.</returns>
-        public static GameplayTagCollection ReadState(GameplayTag tag)
-        {
-            var result = new GameplayTagCollection();
-            if (_mainStory == null) return result;
-            CopyMatchingState(_mainStory.NarrativeState, tag, result);
-            return result;
-        }
+        /// <inheritdoc cref="StorytellerSubsystem.IsActive"/>
+        public static bool                        IsActive   => Main?.IsActive   ?? false;
+        /// <inheritdoc cref="StorytellerSubsystem.Data"/>
+        public static StoryNode                   Data       => Main?.Data;
+        /// <inheritdoc cref="StorytellerSubsystem.Options"/>
+        public static IReadOnlyList<StoryOption>  Options    => Main?.Options    ?? _emptyOptions;
+        /// <inheritdoc cref="StorytellerSubsystem.AllOptions"/>
+        public static IReadOnlyList<StoryOption>  AllOptions => Main?.AllOptions ?? _emptyOptions;
+        /// <inheritdoc cref="StorytellerSubsystem.History"/>
+        public static IReadOnlyList<HistoryEntry> History    => Main?.History    ?? _emptyHistory;
 
-        /// <summary>Applies one or more operations to the main story's narrative state.</summary>
-        /// <param name="ops">The operations to apply in order.</param>
-        public static void Execute(params GameplayTagOperation[] ops) =>
-            _mainStory?.Execute(ops);
+        // ── Narrative state ───────────────────────────────────────────────────
 
-        /// <summary>Clears all narrative-state tags for the main story. Does not clear the history.</summary>
-        public static void ClearState() =>
-            _mainStory?.ClearNarrativeState();
+        /// <inheritdoc cref="StorytellerSubsystem.ReadState(GameplayTag)"/>
+        public static GameplayTagCollection ReadState(GameplayTag tag) =>
+            Main?.ReadState(tag) ?? new GameplayTagCollection();
 
-        /// <summary>Clears narrative-state tags at or beneath the given path in the main story.</summary>
-        /// <param name="tag">The root tag whose subtree of state values is removed.</param>
-        public static void ClearState(GameplayTag tag) =>
-            _mainStory?.ClearNarrativeState(tag);
+        /// <inheritdoc cref="StorytellerSubsystem.Execute(GameplayTagOperation[])"/>
+        public static void Execute(params GameplayTagOperation[] ops) => Main?.Execute(ops);
 
-        /// <summary>
-        /// Returns a new <see cref="GameplayTagCollection"/> containing only narrative-state tags at or beneath
-        /// the given path in the specified story.
-        /// </summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        /// <param name="tag">The root tag whose subtree of state values is returned.</param>
-        /// <returns>A new collection with the matching state tags and their values.</returns>
-        public static GameplayTagCollection ReadState(GameplayTag storyId, GameplayTag tag)
-        {
-            var story  = GetStory(storyId);
-            var result = new GameplayTagCollection();
-            if (story == null) return result;
-            CopyMatchingState(story.NarrativeState, tag, result);
-            return result;
-        }
+        /// <inheritdoc cref="StorytellerSubsystem.ClearState()"/>
+        public static void ClearState() => Main?.ClearState();
 
-        /// <summary>Applies one or more operations to the narrative state of the specified story.</summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        /// <param name="ops">The operations to apply in order.</param>
+        /// <inheritdoc cref="StorytellerSubsystem.ClearState(GameplayTag)"/>
+        public static void ClearState(GameplayTag tag) => Main?.ClearState(tag);
+
+        /// <inheritdoc cref="StorytellerSubsystem.ReadState(GameplayTag, GameplayTag)"/>
+        public static GameplayTagCollection ReadState(GameplayTag storyId, GameplayTag tag) =>
+            Main?.ReadState(storyId, tag) ?? new GameplayTagCollection();
+
+        /// <inheritdoc cref="StorytellerSubsystem.Execute(GameplayTag, GameplayTagOperation[])"/>
         public static void Execute(GameplayTag storyId, params GameplayTagOperation[] ops) =>
-            GetStory(storyId)?.Execute(ops);
+            Main?.Execute(storyId, ops);
 
-        /// <summary>Clears narrative-state tags at or beneath the given path in the specified story.</summary>
-        /// <param name="storyId">The tag identifying the target story.</param>
-        /// <param name="tag">The root tag whose subtree of state values is removed.</param>
+        /// <inheritdoc cref="StorytellerSubsystem.ClearState(GameplayTag, GameplayTag)"/>
         public static void ClearState(GameplayTag storyId, GameplayTag tag) =>
-            GetStory(storyId)?.ClearNarrativeState(tag);
+            Main?.ClearState(storyId, tag);
 
-        /// <summary>Removes all entries from the main story's conversation history.</summary>
-        public static void ClearHistory()          => _mainStory?.ClearHistory();
-        /// <summary>Removes the most recent <paramref name="steps"/> entries from the main story's history.</summary>
-        /// <param name="steps">The number of recent history entries to remove.</param>
-        public static void ClearHistory(int steps) => _mainStory?.ClearHistory(steps);
+        // ── History & save/load ───────────────────────────────────────────────
 
-        /// <summary>Creates and returns a save-state snapshot of the main story's current session.</summary>
-        /// <param name="name">A human-readable label for the save state. Defaults to "snapshot".</param>
-        /// <returns>An <see cref="OghamSaveState"/>, or <c>null</c> when no main story is set.</returns>
-        public static OghamSaveState Snapshot(string name = "snapshot") =>
-            _mainStory?.Snapshot(name);
+        /// <inheritdoc cref="StorytellerSubsystem.ClearHistory()"/>
+        public static void ClearHistory()          => Main?.ClearHistory();
+        /// <inheritdoc cref="StorytellerSubsystem.ClearHistory(int)"/>
+        public static void ClearHistory(int steps) => Main?.ClearHistory(steps);
 
-        /// <summary>Creates and returns a save-state snapshot of the specified story's current session.</summary>
-        /// <param name="storyId">The tag identifying the story to snapshot.</param>
-        /// <param name="name">A human-readable label for the save state. Defaults to "snapshot".</param>
-        /// <returns>An <see cref="OghamSaveState"/>, or <c>null</c> when the story is not registered.</returns>
+        /// <inheritdoc cref="StorytellerSubsystem.Snapshot(string)"/>
+        public static OghamSaveState Snapshot(string name = "snapshot") => Main?.Snapshot(name);
+        /// <inheritdoc cref="StorytellerSubsystem.Snapshot(GameplayTag, string)"/>
         public static OghamSaveState Snapshot(GameplayTag storyId, string name = "snapshot") =>
-            GetStory(storyId)?.Snapshot(name);
+            Main?.Snapshot(storyId, name);
 
-        /// <summary>
-        /// Restores a previously created <see cref="OghamSaveState"/>. Routes to the story matching
-        /// <c>state.StoryId</c> when registered; falls back to the main story otherwise.
-        /// </summary>
-        /// <param name="state">The save state to restore from. <c>null</c> is silently ignored.</param>
-        public static void Restore(OghamSaveState state)
-        {
-            if (state == null) return;
-            var story = state.StoryId != 0 ? GetStory(new GameplayTag(state.StoryId)) : null;
-            (story ?? _mainStory)?.Restore(state);
-        }
-
-        // ── Private ───────────────────────────────────────────────────────────
-
-        private static OghamStory AddStory(OghamStory story, bool setAsMain)
-        {
-            _stories[story.Id.Id] = story;
-            story.OnEntered += ForwardEntered;
-            story.OnChoice  += ForwardChoice;
-            story.OnClosed  += ForwardClosed;
-
-            if (setAsMain || _mainStory == null)
-                _mainStory = story;
-
-            return story;
-        }
-
-        private static void CopyMatchingState(GameplayTagCollection source, GameplayTag tag, GameplayTagCollection dest)
-        {
-            var matches = source.GetMatchingTags(tag);
-            foreach (var t in matches)
-                dest.Apply(t, GameplayTagArithmetic.Set, source.GetValue(t));
-        }
-
-        private static void ForwardEntered(GameplayTag storyId, StoryNode node) =>
-            OnEntered?.Invoke(storyId, node);
-
-        private static void ForwardChoice(GameplayTag storyId, StoryOption option) =>
-            OnChoice?.Invoke(storyId, option);
-
-        private static void ForwardClosed(GameplayTag storyId) =>
-            OnClosed?.Invoke(storyId);
+        /// <inheritdoc cref="StorytellerSubsystem.Restore"/>
+        public static void Restore(OghamSaveState state) => Main?.Restore(state);
     }
 }

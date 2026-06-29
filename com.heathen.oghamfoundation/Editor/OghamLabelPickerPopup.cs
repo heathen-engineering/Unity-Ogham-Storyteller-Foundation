@@ -301,15 +301,13 @@ namespace Heathen.Ogham.Editor
             return c;
         }
 
-        private void RecordMeta(string undoLabel)
-        {
-            Undo.RecordObject(_meta, undoLabel);
-        }
+        // No-op for now: OghamGraphMetadata is a plain class (not a UnityEngine.Object), so Unity Undo
+        // cannot record it; wired to the framework UndoHistory in the final Stage D increment.
+        private void RecordMeta(string undoLabel) { }
 
         private void Commit()
         {
-            EditorUtility.SetDirty(_meta);
-            if (_asset != null) EditorUtility.SetDirty(_asset);
+            // _meta (layout) and _asset (OghamData) both persist via the .ogham JSON on save; nothing to dirty.
             _onChanged?.Invoke();
         }
 

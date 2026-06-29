@@ -61,6 +61,12 @@ namespace Heathen.Ogham
     {
         /// <summary>The dot-path GameplayTag that identifies this entry in the story graph.</summary>
         public string TagPath = string.Empty;
+        /// <summary>
+        /// <see cref="OghamNodeMode"/> name: "Content" (default) or "Fork". A Fork node routes silently at
+        /// runtime (evaluates its options as routes and navigates without displaying), so this must survive into
+        /// the baked manifest or a fork would incorrectly present as a content node.
+        /// </summary>
+        public string Mode = "Content";
         /// <summary>The ordered list of content key descriptors for this entry (text, images, audio, etc.).</summary>
         public List<OghamContentManifest>   ContentKeys     = new();
         /// <summary>Operations applied to narrative state when this entry is entered.</summary>
@@ -82,6 +88,17 @@ namespace Heathen.Ogham
         public string Mode       = "Literal";
         /// <summary>The literal value or Lexicon key, depending on <see cref="Mode"/>.</summary>
         public string KeyOrValue = string.Empty;
+        /// <summary>
+        /// For non-Text literal content, the GUID of the referenced asset. This is the portable, build-safe
+        /// carrier for an asset reference (replacing the editor-only <c>UnityEngine.Object</c>): the runtime
+        /// loads the asset by GUID via the Addressables asset seam. Empty for text or unresolved content.
+        /// </summary>
+        public string AssetGuid = string.Empty;
+        /// <summary>
+        /// For sprite content, the name of the sub-asset within the GUID-identified asset, so sprite sheets
+        /// resolve to the correct sprite. Empty for non-sprite content.
+        /// </summary>
+        public string AssetName = string.Empty;
     }
 
     /// <summary>
@@ -116,8 +133,15 @@ namespace Heathen.Ogham
         public string TagPath    = string.Empty;
         /// <summary><see cref="GameplayTags.GameplayTagArithmetic"/> name: "Set", "Add", "Subtract", "Multiply", "Divide", "Min", or "Max".</summary>
         public string Arithmetic = "Set";
-        /// <summary>The unsigned integer operand for the operation.</summary>
+        /// <summary>The unsigned integer operand for the operation. Ignored when <see cref="ValueTag"/> is set.</summary>
         public ulong  Value      = 1;
+        /// <summary>
+        /// When non-empty, the operand is drawn from this dot-path tag's state value instead of
+        /// <see cref="Value"/> (a tag-valued operation), and <see cref="ValueType"/> is treated as "Tag".
+        /// </summary>
+        public string ValueTag   = string.Empty;
+        /// <summary><see cref="GameplayTags.GameplayTagValueType"/> name: "Unsigned", "Signed", "Decimal", or "Tag".</summary>
+        public string ValueType  = "Unsigned";
         /// <summary>Optional conditions that must be satisfied before this operation is applied.</summary>
         public List<OghamConditionManifest> Conditions = new();
     }
@@ -140,6 +164,12 @@ namespace Heathen.Ogham
         /// <see cref="CompareValue"/>, enabling tag-vs-tag comparisons such as "Total less-than-or-equal Money".
         /// </summary>
         public string CompareTagPath = string.Empty;
+        /// <summary>
+        /// <see cref="GameplayTags.GameplayTagValueType"/> name: "Unsigned" (default), "Signed", "Decimal", or
+        /// "Tag". Determines how <see cref="CompareValue"/> is interpreted; without it a Signed/Decimal
+        /// comparison would silently compare as raw unsigned bits. "Tag" is implied when <see cref="CompareTagPath"/> is set.
+        /// </summary>
+        public string CompareValueType = "Unsigned";
         /// <summary>When <c>true</c>, only an exact tag match is considered. Defaults to <c>true</c>.</summary>
         public bool   ExactMatch   = true;
         /// <summary><see cref="GameplayTags.GameplayTagLogicOp"/> name joining this condition to the preceding one: "And", "Or", or "Xor".</summary>

@@ -94,31 +94,31 @@ namespace Heathen.Ogham
         }
 
         /// <summary>
-        /// Synchronously builds, registers, and returns the <see cref="OghamStory"/>. Asset entries are not loaded.
+        /// Synchronously builds a definition and opens a play session in the main world. Asset entries are not loaded.
         /// </summary>
-        /// <param name="setAsMain">When <c>true</c>, sets the new story as the main story in <see cref="Storyteller"/>.</param>
-        /// <returns>The newly created or updated <see cref="OghamStory"/>.</returns>
-        public OghamStory Build(bool setAsMain = false)
+        /// <param name="setAsMain">When <c>true</c>, sets the new session as the main story in <see cref="Storyteller"/>.</param>
+        /// <returns>The opened <see cref="OghamSession"/>.</returns>
+        public OghamSession Build(bool setAsMain = false)
         {
             var m = ToManifest();
             ApplyTags(m);
             ApplyLocalisations(m);
-            return CreateStory(m, setAsMain);
+            return Storyteller.OpenSession(BuildDefinitionCore(m), setAsMain);
         }
 
         /// <summary>
-        /// Asynchronously builds, registers, and returns the <see cref="OghamStory"/>, loading any registered asset
-        /// entries via <see cref="AssetLoader"/> before creation.
+        /// Asynchronously builds a definition and opens a play session in the main world, loading any registered
+        /// asset entries via <see cref="AssetLoader"/> before creation.
         /// </summary>
-        /// <param name="setAsMain">When <c>true</c>, sets the new story as the main story in <see cref="Storyteller"/>.</param>
-        /// <returns>A task that resolves to the newly created or updated <see cref="OghamStory"/>.</returns>
-        public async Task<OghamStory> BuildAsync(bool setAsMain = false)
+        /// <param name="setAsMain">When <c>true</c>, sets the new session as the main story in <see cref="Storyteller"/>.</param>
+        /// <returns>A task that resolves to the opened <see cref="OghamSession"/>.</returns>
+        public async Task<OghamSession> BuildAsync(bool setAsMain = false)
         {
             var m = ToManifest();
             ApplyTags(m);
             ApplyLocalisations(m);
             await LoadAssetsAsync(m);
-            return CreateStory(m, setAsMain);
+            return Storyteller.OpenSession(BuildDefinitionCore(m), setAsMain);
         }
 
         private OghamStoryManifest ToManifest() => new OghamStoryManifest
@@ -130,34 +130,47 @@ namespace Heathen.Ogham
         };
 
         /// <summary>
-        /// Synchronously builds, registers, and returns an <see cref="OghamStory"/> from the given manifest.
-        /// Asset entries are not loaded. Returns <c>null</c> when <paramref name="manifest"/> is <c>null</c>.
+        /// Builds a fresh <see cref="OghamStory"/> definition from the given manifest, registering its tags and
+        /// inline localisations. The definition carries no session state — open a session to play it. This is the
+        /// entry point the <see cref="OghamStoryCatalog"/> caches. Returns <c>null</c> when <paramref name="manifest"/> is <c>null</c>.
         /// </summary>
-        /// <param name="manifest">The manifest describing the story to create.</param>
-        /// <param name="setAsMain">When <c>true</c>, sets the story as the main story in <see cref="Storyteller"/>.</param>
-        /// <returns>The newly created or updated <see cref="OghamStory"/>, or <c>null</c>.</returns>
-        public static OghamStory Build(OghamStoryManifest manifest, bool setAsMain = false)
+        /// <param name="manifest">The manifest describing the story definition to build.</param>
+        /// <returns>The built definition, or <c>null</c>.</returns>
+        public static OghamStory BuildDefinition(OghamStoryManifest manifest)
         {
             if (manifest == null) return null;
             ApplyTags(manifest);
             ApplyLocalisations(manifest);
-            return CreateStory(manifest, setAsMain);
+            return BuildDefinitionCore(manifest);
         }
 
         /// <summary>
-        /// Asynchronously builds, registers, and returns an <see cref="OghamStory"/> from the given manifest,
+        /// Builds a definition from the given manifest and opens a play session in the main world.
+        /// Asset entries are not loaded. Returns <c>null</c> when <paramref name="manifest"/> is <c>null</c>.
+        /// </summary>
+        /// <param name="manifest">The manifest describing the story to create.</param>
+        /// <param name="setAsMain">When <c>true</c>, sets the session as the main story in <see cref="Storyteller"/>.</param>
+        /// <returns>The opened <see cref="OghamSession"/>, or <c>null</c>.</returns>
+        public static OghamSession Build(OghamStoryManifest manifest, bool setAsMain = false)
+        {
+            var def = BuildDefinition(manifest);
+            return def == null ? null : Storyteller.OpenSession(def, setAsMain);
+        }
+
+        /// <summary>
+        /// Asynchronously builds a definition from the given manifest and opens a play session in the main world,
         /// loading asset entries via <see cref="AssetLoader"/>. Returns <c>null</c> when <paramref name="manifest"/> is <c>null</c>.
         /// </summary>
         /// <param name="manifest">The manifest describing the story to create.</param>
-        /// <param name="setAsMain">When <c>true</c>, sets the story as the main story in <see cref="Storyteller"/>.</param>
-        /// <returns>A task that resolves to the newly created or updated <see cref="OghamStory"/>, or <c>null</c>.</returns>
-        public static async Task<OghamStory> BuildAsync(OghamStoryManifest manifest, bool setAsMain = false)
+        /// <param name="setAsMain">When <c>true</c>, sets the session as the main story in <see cref="Storyteller"/>.</param>
+        /// <returns>A task that resolves to the opened <see cref="OghamSession"/>, or <c>null</c>.</returns>
+        public static async Task<OghamSession> BuildAsync(OghamStoryManifest manifest, bool setAsMain = false)
         {
             if (manifest == null) return null;
             ApplyTags(manifest);
             ApplyLocalisations(manifest);
             await LoadAssetsAsync(manifest);
-            return CreateStory(manifest, setAsMain);
+            return Storyteller.OpenSession(BuildDefinitionCore(manifest), setAsMain);
         }
 
         // ── Internals ─────────────────────────────────────────────────────────
@@ -174,8 +187,12 @@ namespace Heathen.Ogham
 
                 if (em.EntryOperations != null)
                     foreach (var op in em.EntryOperations)
+                    {
                         if (!string.IsNullOrWhiteSpace(op.TagPath))
                             GameplayTagRegistry.Register(op.TagPath);
+                        if (!string.IsNullOrWhiteSpace(op.ValueTag))
+                            GameplayTagRegistry.Register(op.ValueTag);
+                    }
 
                 foreach (var opt in em.Options)
                 {
@@ -198,6 +215,8 @@ namespace Heathen.Ogham
                         {
                             if (!string.IsNullOrWhiteSpace(op.TagPath))
                                 GameplayTagRegistry.Register(op.TagPath);
+                            if (!string.IsNullOrWhiteSpace(op.ValueTag))
+                                GameplayTagRegistry.Register(op.ValueTag);
                             if (op.Conditions != null)
                                 foreach (var cond in op.Conditions)
                                 {
@@ -235,23 +254,26 @@ namespace Heathen.Ogham
             }
         }
 
-        private static OghamStory CreateStory(OghamStoryManifest m, bool setAsMain)
+        // Builds the definition graph from an already tag/locale-applied manifest. No session/storyteller coupling.
+        private static OghamStory BuildDefinitionCore(OghamStoryManifest m)
         {
-            var storyTag = GameplayTag.FromName(m.StoryTagPath);
-            var story    = Storyteller.GetStory(storyTag) ?? new OghamStory(storyTag);
+            var story   = new OghamStory(GameplayTag.FromName(m.StoryTagPath));
 
             var entries = new List<DialogueEntry>(m.Entries.Count);
             foreach (var em in m.Entries)
                 entries.Add(BuildEntry(em));
 
             story.RegisterEntries(entries);
-            Storyteller.RegisterStory(story, setAsMain);
+            // Assets are streamed per node by OghamAssetStreamer (windowed + evicted), not bulk-loaded here:
+            // a 100-1000 node story with images/audio/VFX/prefabs per node must not load everything at once.
             return story;
         }
 
         private static DialogueEntry BuildEntry(OghamEntryManifest em)
         {
             var entry = new DialogueEntry { TagPath = em.TagPath };
+            if (Enum.TryParse<OghamNodeMode>(em.Mode, true, out var nodeMode))
+                entry.Mode = nodeMode;
 
             foreach (var cm in em.ContentKeys)
                 entry.ContentKeys.Add(BuildContentKey(cm));
@@ -267,7 +289,14 @@ namespace Heathen.Ogham
         {
             Enum.TryParse<OghamContentType>(cm.Type, true, out var type);
             Enum.TryParse<LexiconLocMode>(cm.Mode,   true, out var mode);
-            return new OghamContentKey { Type = type, Mode = mode, KeyOrValue = cm.KeyOrValue };
+            return new OghamContentKey
+            {
+                Type       = type,
+                Mode       = mode,
+                KeyOrValue = cm.KeyOrValue,
+                AssetGuid  = cm.AssetGuid ?? string.Empty,
+                AssetName  = cm.AssetName ?? string.Empty,
+            };
         }
 
         /// <summary>
@@ -279,12 +308,34 @@ namespace Heathen.Ogham
         internal static GameplayTagOperation BuildOperation(OghamOperationManifest om)
         {
             Enum.TryParse<GameplayTagArithmetic>(om.Arithmetic, true, out var arith);
+            // Accept O3DE short forms for cross-engine portability: Sub→Subtract, Mul→Multiply, Div→Divide.
+            if (arith == GameplayTagArithmetic.Set)
+                arith = om.Arithmetic switch
+                {
+                    "Sub" => GameplayTagArithmetic.Subtract,
+                    "Mul" => GameplayTagArithmetic.Multiply,
+                    "Div" => GameplayTagArithmetic.Divide,
+                    _     => arith,
+                };
+
             var op = new GameplayTagOperation
             {
                 Tag        = GameplayTag.FromName(om.TagPath),
                 Arithmetic = arith,
                 Value      = om.Value,
             };
+
+            // Tag-valued operand takes precedence; otherwise honour the declared value type.
+            if (!string.IsNullOrWhiteSpace(om.ValueTag))
+            {
+                op.ValueTag  = GameplayTag.FromName(om.ValueTag);
+                op.ValueType = GameplayTagValueType.Tag;
+            }
+            else if (Enum.TryParse<GameplayTagValueType>(om.ValueType, true, out var vt))
+            {
+                op.ValueType = vt;
+            }
+
             if (om.Conditions != null)
                 foreach (var cm in om.Conditions)
                     op.Conditions.Add(BuildCondition(cm));
@@ -310,7 +361,15 @@ namespace Heathen.Ogham
                 LogicOp      = logic,
             };
             if (!string.IsNullOrWhiteSpace(cm.CompareTagPath))
-                cond.CompareTag = GameplayTag.FromName(cm.CompareTagPath);
+            {
+                // A compare-tag operand implies a Tag-typed right-hand side (mirrors the condition editor).
+                cond.CompareTag       = GameplayTag.FromName(cm.CompareTagPath);
+                cond.CompareValueType = GameplayTagValueType.Tag;
+            }
+            else if (Enum.TryParse<GameplayTagValueType>(cm.CompareValueType, true, out var cvt))
+            {
+                cond.CompareValueType = cvt;
+            }
             return cond;
         }
 
