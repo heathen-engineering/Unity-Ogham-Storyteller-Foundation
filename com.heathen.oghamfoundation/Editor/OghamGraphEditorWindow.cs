@@ -544,14 +544,11 @@ namespace Heathen.Ogham.Editor
                         EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
                         SaveOghamFiles();
 
-                    var savedBg = GUI.backgroundColor;
-                    if (_needsBuild) GUI.backgroundColor = new Color(1f, 0.85f, 0.2f);
-                    if (GUILayout.Button(ToolbarIcon("BuildSettings.Editor.Small",
-                            _needsBuild ? "Build — generate code. Changes need building before Play."
-                                        : "Build — generate code (up to date)", "Build"),
-                        EditorStyles.toolbarButton, GUILayout.Width(TbBtn)))
+                    // Shared Heathen Build/status button: amber "Update" when there are unbuilt changes,
+                    // green "Ready" when the baked code is current.
+                    var status = _needsBuild ? HeathenEditorStyles.BuildStatus.Dirty : HeathenEditorStyles.BuildStatus.UpToDate;
+                    if (HeathenEditorStyles.BuildStatusButton(status, 74f))
                         BuildStories();
-                    GUI.backgroundColor = savedBg;
                 }
 
                 GUILayout.FlexibleSpace();
