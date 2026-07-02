@@ -16,7 +16,7 @@ namespace Heathen.Ogham.Editor
     {
         public Type SubsystemType => typeof(StorytellerSubsystem);
 
-        public void Open() => SettingsService.OpenProjectSettings("Project/Subsystems/Ogham Storyteller");
+        public void Open() => OghamGraphEditorWindow.Open();
         public string DocumentationUrl => "https://heathen.group/kb/ogham-welcome/";
 
         public IEnumerable<SubsystemIssue> GetIssues()

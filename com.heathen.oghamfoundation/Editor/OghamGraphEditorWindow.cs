@@ -154,7 +154,11 @@ namespace Heathen.Ogham.Editor
 
         private void OnEnable()
         {
-            var icon = EditorGUIUtility.IconContent("d_console.infoicon").image;
+            // The version-control (branch) glyph suits the story-graph tab; fall back gracefully across Unity
+            // versions so the tab never ends up icon-less if a built-in name differs.
+            var icon = EditorGUIUtility.IconContent("d_UnityEditor.VersionControl").image
+                    ?? EditorGUIUtility.IconContent("UnityEditor.VersionControl").image
+                    ?? EditorGUIUtility.IconContent("d_console.infoicon").image;
             titleContent = new GUIContent("Ogham Storyteller", icon);
             wantsMouseMove = true;
             foreach (var asset in _openAssets)
