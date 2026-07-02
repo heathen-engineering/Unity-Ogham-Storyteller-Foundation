@@ -12,9 +12,12 @@ namespace Heathen.Ogham.Editor
     /// play-mode guard / Scene-view overlay). Reuses the registered "Ogham Stories" generator so it always agrees
     /// with the shared build pipeline.
     /// </summary>
-    public sealed class OghamSubsystemHealth : ISubsystemHealth
+    public sealed class OghamSubsystemHealth : ISubsystemHealth, ISubsystemSettingsPage, ISubsystemDocumentation
     {
         public Type SubsystemType => typeof(StorytellerSubsystem);
+
+        public void Open() => SettingsService.OpenProjectSettings("Project/Subsystems/Ogham Storyteller");
+        public string DocumentationUrl => "https://heathen.group/kb/ogham-welcome/";
 
         public IEnumerable<SubsystemIssue> GetIssues()
         {
