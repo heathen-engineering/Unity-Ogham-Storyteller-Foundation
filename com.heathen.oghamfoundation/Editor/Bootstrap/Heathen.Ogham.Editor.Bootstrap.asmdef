@@ -1,15 +1,7 @@
 {
-    "name": "Heathen.Ogham.Editor",
-    "rootNamespace": "",
-    "references": [
-        "Heathen.GameFramework",
-        "Heathen.GameFramework.Editor",
-        "Heathen.GameplayTags",
-        "Heathen.GameplayTags.Editor",
-        "Heathen.Lexicon",
-        "Heathen.Lexicon.Editor",
-        "Heathen.Ogham"
-    ],
+    "name": "Heathen.Ogham.Editor.Bootstrap",
+    "rootNamespace": "Heathen.Ogham.Editor",
+    "references": [],
     "includePlatforms": [
         "Editor"
     ],
@@ -18,9 +10,7 @@
     "overrideReferences": false,
     "precompiledReferences": [],
     "autoReferenced": true,
-    "defineConstraints": [
-        "HEATHEN_GAMEFRAMEWORK"
-    ],
+    "defineConstraints": [],
     "versionDefines": [
         {
             "name": "com.heathen.gameframework",
