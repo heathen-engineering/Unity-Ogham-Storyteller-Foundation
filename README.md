@@ -2,7 +2,7 @@
 
 ![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)
 ![Maintained](https://img.shields.io/badge/Maintained%3F-yes-green?style=flat-square)
-![Unity](https://img.shields.io/badge/Unity-6%20%2B-black?style=flat-square&logo=unity&logoColor=white)
+![Unity](https://img.shields.io/badge/Unity-6%20%2B-%23313131?style=flat-square&logo=unity&logoColor=white)
 [![Dependency](https://img.shields.io/badge/Dependency-GameplayTags_Foundation-lightgrey?style=flat-square)](https://github.com/heathen-engineering/Unity-GameplayTags-Foundation)
 [![Dependency](https://img.shields.io/badge/Dependency-Lexicon_Foundation-lightgrey?style=flat-square)](https://github.com/heathen-engineering/Unity-Lexicon-Localisation-Foundation)
 
